@@ -80,7 +80,7 @@ async def restore(interaction: discord.Interaction, file: discord.Attachment):
         await interaction.response.send_message("❌ 有効なJSONファイルをアップロードしてください。", ephemeral=True)
         return
 
-    await interaction.response.send_message("🔄 復元を開始します。", ephemeral=True)
+    await interaction.response.send_message("🔄 復元を開始します...", ephemeral=True)
 
     try:
         content = await file.read()
@@ -89,19 +89,43 @@ async def restore(interaction: discord.Interaction, file: discord.Attachment):
         await interaction.followup.send(f"❌ 復元ファイルの読み込みに失敗しました: {e}", ephemeral=True)
         return
 
-    count = 0
-    for msg in messages_data:
-        content = f"**{msg['author']}**: {msg['content']}" if msg['content'] else f"**{msg['author']}**"
+    # Webhook作成
+    try:
+        webhook = await interaction.channel.create_webhook(name="復元Bot")
+    except discord.Forbidden:
+        await interaction.followup.send("❌ Webhookを作成できません。BotにWebhookの権限があるか確認してください。", ephemeral=True)
+        return
+
+    async def send_message_via_webhook(msg):
+        username = msg.get("author", "Unknown")
+        content = msg.get("content", "")
+        avatar_url = None  # デフォルト
+
+        # アイコン取得（authorにIDが含まれていないため難しい、任意で変更可能）
+        # backupにユーザーIDやアバターURLが保存されていればここに反映
+
         embeds = [discord.Embed.from_dict(e) for e in msg.get("embeds", [])]
-
         try:
-            await interaction.channel.send(content=content, embeds=embeds)
-            count += 1
-            await asyncio.sleep(0.5)  # スパム防止
+            await webhook.send(
+                content=content if content else None,
+                username=username,
+                avatar_url=avatar_url,
+                embeds=embeds,
+                wait=True
+            )
         except Exception as e:
-            print(f"メッセージ送信エラー: {e}")
-            continue
+            print(f"送信失敗: {e}")
 
-    await interaction.followup.send(f"✅ 復元が完了しました！({count} 件)", ephemeral=True)
+    # 並列でメッセージを送信（早い）
+    tasks = [send_message_via_webhook(msg) for msg in messages_data]
+    await asyncio.gather(*tasks)
+
+    # 復元完了後にWebhookを削除
+    try:
+        await webhook.delete()
+    except Exception as e:
+        print(f"Webhook削除失敗: {e}")
+
+    await interaction.followup.send(f"✅ 復元が完了しました！ ({len(messages_data)} 件)", ephemeral=True)
 
 bot.run("MTM5MzQ1NzUwNjc4ODgzOTUzNw.GTfqQX.3aH9109-F1CTSJ1oSUlJZ1WXFvIH5Wcg5CUt7E")  # ※ 本番用には.env等でトークン管理するのがおすすめです
