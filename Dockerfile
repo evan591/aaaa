@@ -17,4 +17,3 @@ COPY . .
 
 # 起動コマンド
 CMD ["python", "bot.py"]
-CMD ["python", "yomiage.py"]
