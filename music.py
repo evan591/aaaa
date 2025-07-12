@@ -24,12 +24,12 @@ tree = bot.tree
 
 queue = []
 loop_song = False
-disconnect_timers = {}
+disconnect_timer = {}
 
 @bot.event
 async def on_ready():
     await tree.sync()
-    print(f"✅ Logged in as {bot.user}!")
+    print(f"✅ Logged in as {bot.user}")
 
 def get_source(url):
     with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
@@ -40,7 +40,7 @@ def get_source(url):
             'webpage_url': info.get('webpage_url'),
         }
 
-async def play_next(vc, ctx):
+async def play_next(vc, interaction):
     global queue, loop_song
     if loop_song and queue:
         song = queue[0]
@@ -50,10 +50,10 @@ async def play_next(vc, ctx):
         return
 
     source = await discord.FFmpegOpusAudio.from_probe(song['url'], **FFMPEG_OPTIONS)
-    vc.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(vc, ctx), bot.loop))
+    vc.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(vc, interaction), bot.loop))
 
     embed = discord.Embed(title="🎵 Now Playing", description=f"[{song['title']}]({song['webpage_url']})", color=0x1DB954)
-    await ctx.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @tree.command(name="play", description="YouTubeの音楽を再生します")
 @app_commands.describe(url="YouTubeのURL")
@@ -113,20 +113,17 @@ async def on_voice_state_update(member, before, after):
         return
 
     if len(vc.channel.members) == 1:
-        if member.guild.id in disconnect_timers:
-            disconnect_timers[member.guild.id].cancel()
+        if member.guild.id in disconnect_timer:
+            disconnect_timer[member.guild.id].cancel()
 
-        disconnect_timers[member.guild.id] = bot.loop.call_later(
+        disconnect_timer[member.guild.id] = bot.loop.call_later(
             600, lambda: asyncio.create_task(auto_disconnect(vc))
         )
-    else:
-        if member.guild.id in disconnect_timers:
-            disconnect_timers[member.guild.id].cancel()
 
 async def auto_disconnect(vc):
     if vc.is_connected():
         await vc.disconnect()
         print(f"⏰ 自動でVCから切断しました: {vc.guild.name}")
 
-# Botを起動
-bot.run("DISCORD_BOT_TOKEN")
+# 実行
+bot.run("MTM5MzQ1NzUwNjc4ODgzOTUzNw.G-Dtub.9MEz-V7cbS3ZQ1mQYcWYxklZSjQOPDuNM0VGqs")
