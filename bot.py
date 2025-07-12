@@ -254,9 +254,9 @@ async def on_ready():
         print(f"⚠️ Sync failed: {e}")
 
 # 起動（環境変数からトークン取得）
-token = os.getenv("MTM5MzQ1NzUwNjc4ODgzOTUzNw.GTfqQX.3aH9109-F1CTSJ1oSUlJZ1WXFvIH5Wcg5CUt7E")
+token = os.getenv("DISCORD_BOT_TOKEN")
 if not token:
     print("❌ DISCORD_BOT_TOKEN が設定されていません。")
 else:
-    bot.run('MTM5MzQ1NzUwNjc4ODgzOTUzNw.GTfqQX.3aH9109-F1CTSJ1oSUlJZ1WXFvIH5Wcg5CUt7E')
+    bot.run(token)
 
