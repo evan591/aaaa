@@ -258,7 +258,115 @@ async def restore(interaction: discord.Interaction, file: discord.Attachment):
         print(f"Webhook削除失敗: {e}")
 
     await interaction.followup.send(f"✅ 復元が完了しました！ ({len(messages_data)} 件)", ephemeral=True)
+    
+# =====================
+# サーバーテンプレート機能
+# =====================
 
+@tree.command(name="save_template", description="現在のサーバー構成（ロール・チャンネル）をテンプレートとして保存します")
+async def save_template(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+
+    guild = interaction.guild
+
+    data = {
+        "roles": [],
+        "categories": [],
+        "channels": []
+    }
+
+    # ロール情報
+    for role in guild.roles:
+        if role.is_default():  # @everyone はスキップ
+            continue
+        data["roles"].append({
+            "name": role.name,
+            "permissions": role.permissions.value,
+            "color": role.color.value,
+            "hoist": role.hoist,
+            "mentionable": role.mentionable
+        })
+
+    # カテゴリ情報
+    for category in guild.categories:
+        data["categories"].append({"name": category.name, "position": category.position})
+
+    # チャンネル情報（カテゴリ所属含む）
+    for channel in guild.channels:
+        if isinstance(channel, discord.TextChannel):
+            data["channels"].append({
+                "type": "text",
+                "name": channel.name,
+                "category": channel.category.name if channel.category else None,
+                "position": channel.position
+            })
+        elif isinstance(channel, discord.VoiceChannel):
+            data["channels"].append({
+                "type": "voice",
+                "name": channel.name,
+                "category": channel.category.name if channel.category else None,
+                "position": channel.position
+            })
+
+    json_str = json.dumps(data, indent=2, ensure_ascii=False)
+    file = discord.File(fp=io.BytesIO(json_str.encode("utf-8")), filename=f"{guild.name}_template.json")
+    await interaction.response.send_message("✅ サーバーテンプレートを保存しました！", file=file, ephemeral=True)
+
+
+@tree.command(name="load_template", description="テンプレートファイルからロール・チャンネルを復元します")
+@app_commands.describe(file="テンプレートJSONファイルを添付してください")
+async def load_template(interaction: discord.Interaction, file: discord.Attachment):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+
+    if not file.filename.endswith(".json"):
+        return await interaction.response.send_message("❌ 有効なテンプレートファイル（.json）をアップロードしてください。", ephemeral=True)
+
+    await interaction.response.send_message("🔧 サーバー構成の復元を開始します...", ephemeral=True)
+
+    try:
+        content = await file.read()
+        template = json.loads(content.decode("utf-8"))
+    except Exception as e:
+        return await interaction.followup.send(f"❌ テンプレート読み込みに失敗しました: {e}", ephemeral=True)
+
+    guild = interaction.guild
+
+    # ロール復元（上から順に作成）
+    for role_data in template.get("roles", []):
+        try:
+            await guild.create_role(
+                name=role_data["name"],
+                permissions=discord.Permissions(role_data["permissions"]),
+                color=discord.Color(role_data["color"]),
+                hoist=role_data["hoist"],
+                mentionable=role_data["mentionable"]
+            )
+        except Exception as e:
+            print(f"ロール作成失敗: {e}")
+
+    # カテゴリ作成
+    categories_map = {}
+    for cat_data in sorted(template.get("categories", []), key=lambda x: x["position"]):
+        try:
+            category = await guild.create_category(name=cat_data["name"])
+            categories_map[cat_data["name"]] = category
+        except Exception as e:
+            print(f"カテゴリ作成失敗: {e}")
+
+    # チャンネル作成
+    for ch in template.get("channels", []):
+        try:
+            category = categories_map.get(ch["category"]) if ch["category"] else None
+            if ch["type"] == "text":
+                await guild.create_text_channel(name=ch["name"], category=category)
+            elif ch["type"] == "voice":
+                await guild.create_voice_channel(name=ch["name"], category=category)
+        except Exception as e:
+            print(f"チャンネル作成失敗: {e}")
+
+    await interaction.followup.send("✅ サーバー構成の復元が完了しました！", ephemeral=True)
  
 
 # =====================
