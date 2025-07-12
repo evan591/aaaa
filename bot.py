@@ -8,9 +8,21 @@ from datetime import datetime, timedelta
 import os
 import time
 
+intents = discord.Intents.default()
+intents.message_content = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+tree = bot.tree  # ← 🔥 これがないと @tree.command は使えません！
+
 @tree.command(name="ping", description="Botの応答速度を確認します")
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("🏓 Pong!", ephemeral=True)
+
+@bot.event
+async def on_ready():
+    await tree.sync()
+    print(f"Logged in as {bot.user}")
+
 
 # =====================
 # Bot 初期設定
