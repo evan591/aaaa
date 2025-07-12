@@ -172,49 +172,93 @@ async def resetwarns(interaction: discord.Interaction, user: discord.User):
     save_warnings()
     await interaction.response.send_message(f"{user.mention} の警告をリセットしました", ephemeral=True)
 
-@tree.command(name="play", description="YouTube音源を再生")
+
+@tree.command(name="play", description="音楽を再生します")
 @app_commands.describe(url="YouTubeのURL")
 async def play(interaction: discord.Interaction, url: str):
     await interaction.response.defer()
-    voice = interaction.user.voice
-    if not voice:
-        return await interaction.followup.send("❌ 先にVCに入ってください")
-    vc = discord.utils.get(bot.voice_clients, guild=interaction.guild)
-    try:
-        src = get_source(url)
-    except Exception as e:
-        return await interaction.followup.send(f"❌ 再生に失敗しました: {e}")
-    if vc and vc.is_connected():
-        queue.append(src)
-        await interaction.followup.send(f"✅ キューに追加: [{src['title']}]({src['webpage_url']})")
-    else:
-        vc = await voice.channel.connect()
-        queue.append(src)
-        await play_next(vc, interaction)
 
-@tree.command(name="stop", description="再生を停止")
-async def stop(interaction: discord.Interaction):
-    vc = discord.utils.get(bot.voice_clients, guild=interaction.guild)
+    voice_channel = interaction.user.voice.channel if interaction.user.voice else None
+    if not voice_channel:
+        await interaction.followup.send("ボイスチャンネルに参加してください。")
+        return
+
+    vc = interaction.guild.voice_client
     if vc and vc.is_playing():
-        vc.stop()
-        await interaction.response.send_message("⏹️ 再生停止")
-    else:
-        await interaction.response.send_message("❌ 再生中ではありません")
+        await interaction.followup.send("既に再生中です。/stop で停止できます。")
+        return
 
-@tree.command(name="leave", description="VCから退出")
+    if not vc:
+        vc = await voice_channel.connect()
+
+    with YoutubeDL(YDL_OPTIONS) as ydl:
+        try:
+            info = ydl.extract_info(url, download=False)
+            source_url = info['url']
+            title = info.get("title", "不明なタイトル")
+        except Exception as e:
+            await interaction.followup.send(f"エラーが発生しました: {e}")
+            return
+
+    guild_id = interaction.guild.id
+    guild_audio[guild_id] = {
+        "source": discord.FFmpegPCMAudio(source_url, **FFMPEG_OPTIONS),
+        "title": title,
+        "loop": False,
+        "channel": voice_channel,
+        "last_active": datetime.now()
+    }
+
+    def after_play(e):
+        if guild_audio[guild_id].get("loop"):
+            vc.play(guild_audio[guild_id]["source"]._original, after=after_play)
+        else:
+            asyncio.run_coroutine_threadsafe(vc.disconnect(), bot.loop)
+
+    vc.play(guild_audio[guild_id]["source"], after=after_play)
+    await interaction.followup.send(f"🎶 再生中: **{title}**")
+
+@tree.command(name="stop", description="再生を停止します")
+async def stop(interaction: discord.Interaction):
+    vc = interaction.guild.voice_client
+    if not vc or not vc.is_playing():
+        await interaction.response.send_message("再生中の音楽がありません。")
+        return
+
+    vc.stop()
+    await interaction.response.send_message("⏹️ 再生を停止しました。")
+
+@tree.command(name="leave", description="ボイスチャンネルから退出します")
 async def leave(interaction: discord.Interaction):
-    vc = discord.utils.get(bot.voice_clients, guild=interaction.guild)
+    vc = interaction.guild.voice_client
     if vc:
         await vc.disconnect()
-        await interaction.response.send_message("👋 VCから退出しました")
+        await interaction.response.send_message("👋 ボイスチャンネルから退出しました。")
     else:
-        await interaction.response.send_message("❌ 接続されていません")
+        await interaction.response.send_message("ボイスチャンネルに接続していません。")
 
-@tree.command(name="loop", description="ループモード切替")
-async def loop_cmd(interaction: discord.Interaction):
-    global loop_song
-    loop_song = not loop_song
-    await interaction.response.send_message(f"🔁 ループ: {'有効' if loop_song else '無効'}")
+@tree.command(name="loop", description="ループ再生を切り替えます")
+async def loop(interaction: discord.Interaction):
+    guild_id = interaction.guild.id
+    if guild_id in guild_audio:
+        guild_audio[guild_id]["loop"] = not guild_audio[guild_id]["loop"]
+        status = "有効" if guild_audio[guild_id]["loop"] else "無効"
+        await interaction.response.send_message(f"🔁 ループ再生を**{status}**にしました。")
+    else:
+        await interaction.response.send_message("現在再生されている曲がありません。")
+
+@tasks.loop(seconds=60)
+async def auto_disconnect():
+    for guild in bot.guilds:
+        vc = guild.voice_client
+        if vc and not vc.is_playing() and len(vc.channel.members) == 1:
+            await vc.disconnect()
+
+@bot.event
+async def on_ready():
+    await tree.sync()
+    print(f"ログイン完了: {bot.user}")
+    auto_disconnect.start()
 
 @tree.command(name="backup", description="メッセージをバックアップ")
 @app_commands.describe(days="過去何日分か")
