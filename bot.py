@@ -10,7 +10,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# グローバルバックアップステータス（進捗管理用）
+# グローバルステータス管理
 backup_status = {}
 
 @bot.event
@@ -22,6 +22,9 @@ async def on_ready():
     except Exception as e:
         print(f"Sync failed: {e}")
 
+# -------------------------------
+# 📦 バックアップコマンド
+# -------------------------------
 @tree.command(name="backup", description="このチャンネルのメッセージをバックアップします")
 async def backup(interaction: discord.Interaction):
     await interaction.response.send_message("📦 バックアップを開始します...", ephemeral=True)
@@ -41,7 +44,8 @@ async def backup(interaction: discord.Interaction):
     messages_data = []
     async for message in channel.history(limit=None, oldest_first=True):
         messages_data.append({
-            "author": str(message.author),
+            "display_name": message.author.display_name,
+            "avatar_url": message.author.display_avatar.url,
             "content": message.content,
             "created_at": str(message.created_at),
             "attachments": [a.url for a in message.attachments],
@@ -57,6 +61,9 @@ async def backup(interaction: discord.Interaction):
     file = discord.File(fp=io.BytesIO(json_str.encode("utf-8")), filename=f"backup_{channel.id}.json")
     await interaction.followup.send("✅ バックアップが完了しました！", file=file)
 
+# -------------------------------
+# 📊 ステータス確認コマンド
+# -------------------------------
 @tree.command(name="status", description="現在のバックアップ状況を確認します")
 async def status(interaction: discord.Interaction):
     guild_id = interaction.guild_id
@@ -73,6 +80,9 @@ async def status(interaction: discord.Interaction):
     )
     await interaction.response.send_message(f"📊 バックアップ進行状況:\n{progress}", ephemeral=True)
 
+# -------------------------------
+# 🔁 復元コマンド
+# -------------------------------
 @tree.command(name="restore", description="バックアップファイルからメッセージを復元します")
 @app_commands.describe(file="バックアップJSONファイルを添付してください")
 async def restore(interaction: discord.Interaction, file: discord.Attachment):
@@ -97,18 +107,15 @@ async def restore(interaction: discord.Interaction, file: discord.Attachment):
         return
 
     async def send_message_via_webhook(msg):
-        username = msg.get("author", "Unknown")
+        display_name = msg.get("display_name", "Unknown")
+        avatar_url = msg.get("avatar_url", None)
         content = msg.get("content", "")
-        avatar_url = None  # デフォルト
-
-        # アイコン取得（authorにIDが含まれていないため難しい、任意で変更可能）
-        # backupにユーザーIDやアバターURLが保存されていればここに反映
-
         embeds = [discord.Embed.from_dict(e) for e in msg.get("embeds", [])]
+
         try:
             await webhook.send(
                 content=content if content else None,
-                username=username,
+                username=display_name,
                 avatar_url=avatar_url,
                 embeds=embeds,
                 wait=True
@@ -116,11 +123,11 @@ async def restore(interaction: discord.Interaction, file: discord.Attachment):
         except Exception as e:
             print(f"送信失敗: {e}")
 
-    # 並列でメッセージを送信（早い）
+    # 並列で送信（復元高速化）
     tasks = [send_message_via_webhook(msg) for msg in messages_data]
     await asyncio.gather(*tasks)
 
-    # 復元完了後にWebhookを削除
+    # Webhook削除
     try:
         await webhook.delete()
     except Exception as e:
@@ -128,4 +135,7 @@ async def restore(interaction: discord.Interaction, file: discord.Attachment):
 
     await interaction.followup.send(f"✅ 復元が完了しました！ ({len(messages_data)} 件)", ephemeral=True)
 
-bot.run("MTM5MzQ1NzUwNjc4ODgzOTUzNw.GTfqQX.3aH9109-F1CTSJ1oSUlJZ1WXFvIH5Wcg5CUt7E")  # ※ 本番用には.env等でトークン管理するのがおすすめです
+# -------------------------------
+# 起動
+# -------------------------------
+bot.run("MTM5MzQ1NzUwNjc4ODgzOTUzNw.GTfqQX.3aH9109-F1CTSJ1oSUlJZ1WXFvIH5Wcg5CUt7E")  
