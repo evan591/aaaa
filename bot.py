@@ -445,6 +445,16 @@ weekly_backup_task.start()
 # =====================
 # 起動処理
 # =====================
+
+from discord.ext import commands, tasks
+
+bot = commands.Bot(command_prefix='!')
+
+@tasks.loop(hours=168)  # 毎週（168時間）実行
+async def weekly_backup_task():
+    print("バックアップを実行中...")
+    # バックアップ処理をここに書く
+
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}!")
