@@ -29,7 +29,7 @@ tree = bot.tree
 
 queue = []
 loop_song = False
-disconnect_timer = {}
+disconnect_timers = {}
 
 @bot.event
 async def on_ready():
@@ -118,18 +118,20 @@ async def on_voice_state_update(member, before, after):
         return
 
     if len(vc.channel.members) == 1:
-        if member.guild.id in disconnect_timer:
-            disconnect_timer[member.guild.id].cancel()
+        if member.guild.id in disconnect_timers:
+            disconnect_timers[member.guild.id].cancel()
 
-        disconnect_timer[member.guild.id] = bot.loop.call_later(
+        disconnect_timers[member.guild.id] = bot.loop.call_later(
             600, lambda: asyncio.create_task(auto_disconnect(vc))
         )
+    else:
+        if member.guild.id in disconnect_timers:
+            disconnect_timers[member.guild.id].cancel()
 
 async def auto_disconnect(vc):
     if vc.is_connected():
         await vc.disconnect()
         print(f"⏰ 自動でVCから切断しました: {vc.guild.name}")
-
 
 intents = discord.Intents.default()
 intents.message_content = True
