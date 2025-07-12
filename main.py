@@ -1,7 +1,7 @@
 import subprocess
 
-subprocess.Popen(["python", "file1.py"])
-subprocess.Popen(["python", "file2.py"])
+subprocess.Popen(["python", "bot.py"])
+subprocess.Popen(["python", "music.py"])
 
 # 終了しないように待機（必要に応じて）
 import time
