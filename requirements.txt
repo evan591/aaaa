@@ -6,3 +6,5 @@ loguru
 minio
 yt_dlp
 PyNaCl
+pynacl
+spotipy
