@@ -141,6 +141,9 @@ async def help_command(interaction: discord.Interaction):
     await interaction.response.send_message(
         """**📘 Botコマンド一覧 / Command List:**
 ・/backup [days] - メッセージをバックアップ
+' /play [youtube url] - 音源を再生
+' /leave - botをvcから抜かせる
+' /stop - 音源の再生を止める
 ・/restore [file] - メッセージ復元
 ・/status - バックアップ進捗確認
 ・/warns [user] - スパム警告数確認
