@@ -36,7 +36,7 @@ FFMPEG_OPTIONS = {
 YDL_OPTIONS = {
     "format": "bestaudio/best",
     "quiet": True,
-    "extract_flat": False
+    "extract_flat": False,
     "cookiefile": "cookies.txt"  
 }
 
