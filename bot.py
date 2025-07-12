@@ -94,7 +94,7 @@ async def on_message(message):
 
 @tree.command(name="warns", description="特定ユーザーのスパム警告数を表示します")
 @app_commands.describe(user="警告数を確認したいユーザー")
-def warns(interaction: discord.Interaction, user: discord.User):
+async def warns(interaction: discord.Interaction, user: discord.User):
     load_warnings()
     user_id = str(user.id)
     warn_count = spam_data["warnings"].get(user_id, 0)
