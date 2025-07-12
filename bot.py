@@ -71,4 +71,4 @@ async def restore(ctx, filename: str):
     await ctx.send("✅ 復元が完了しました。")
 
 
-bot.run(MTM5MzQ1NzUwNjc4ODgzOTUzNw.GTfqQX.3aH9109-F1CTSJ1oSUlJZ1WXFvIH5Wcg5CUt7E)
+bot.run('MTM5MzQ1NzUwNjc4ODgzOTUzNw.GTfqQX.3aH9109-F1CTSJ1oSUlJZ1WXFvIH5Wcg5CUt7E')
