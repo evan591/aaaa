@@ -8,6 +8,7 @@ import io
 import time
 import os
 from datetime import datetime, timedelta
+from discord.ext import tasks
 
 # --- 初期設定 ---
 intents = discord.Intents.default()
