@@ -1,4 +1,2 @@
-discord_backup_bot/
-├── bot.py
-└── config.json 
-
+discord.py
+pyodbc
