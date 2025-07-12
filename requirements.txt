@@ -5,3 +5,4 @@ pyodbc
 loguru
 minio
 yt_dlp
+PyNaCl
