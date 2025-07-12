@@ -275,5 +275,6 @@ token = os.getenv("DISCORD_BOT_TOKEN")
 if not token:
     print("❌ DISCORD_BOT_TOKEN が設定されていません。")
 else:
+    print("🟢 Starting bot...")
     bot.run(token)
 
