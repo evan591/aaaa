@@ -374,7 +374,7 @@ async def load_template(interaction: discord.Interaction, file: discord.Attachme
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix='!', intents=intents)
-tree = app_commands.CommandTree(bot)
+tree = bot.tree
 
 auto_backup_enabled = True  # 🔄 自動バックアップのオンオフ切り替え用フラグ
 
