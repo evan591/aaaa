@@ -383,7 +383,8 @@ async def restore(interaction: discord.Interaction, file: discord.Attachment):
 
     await interaction.followup.send(f"✅ 復元が完了しました！ ({len(messages_data)} 件)", ephemeral=True)
 
-    
+ 
+
 # =====================
 # 起動処理
 # =====================
