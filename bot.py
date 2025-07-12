@@ -257,7 +257,7 @@ async def restore(interaction: discord.Interaction, file: discord.Attachment):
         print(f"Webhook削除失敗: {e}")
 
     await interaction.followup.send(f"✅ 復元が完了しました！ ({len(messages_data)} 件)", ephemeral=True)
-
+    
 # =====================
 # 起動処理
 # =====================
@@ -273,8 +273,7 @@ async def on_ready():
 # 起動（環境変数からトークン取得）
 token = os.getenv("DISCORD_BOT_TOKEN")
 if not token:
-    print("❌ DISCORD_BOT_TOKEN が設定されていません。")
+    print("❌ DISCORD_BOT_TOKEN が設定されていません。Koyebの環境変数に設定してください。")
 else:
     print("🟢 Starting bot...")
     bot.run(token)
-
