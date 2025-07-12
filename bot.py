@@ -4,13 +4,14 @@ from discord.ext import commands
 import asyncio
 import json
 import io
+from datetime import datetime, timedelta
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# グローバルステータス管理
+# グローバルバックアップステータス
 backup_status = {}
 
 @bot.event
@@ -26,13 +27,14 @@ async def on_ready():
 # 📦 バックアップコマンド
 # -------------------------------
 @tree.command(name="backup", description="このチャンネルのメッセージをバックアップします")
-async def backup(interaction: discord.Interaction):
-    await interaction.response.send_message("📦 バックアップを開始します...", ephemeral=True)
+@app_commands.describe(days="バックアップ対象とする過去の日数（例：7 なら過去7日間）")
+async def backup(interaction: discord.Interaction, days: int = 7):
+    await interaction.response.send_message(f"📦 過去 {days} 日分のバックアップを開始します...", ephemeral=True)
 
     channel = interaction.channel
     guild_id = interaction.guild_id
 
-    # バックアップ状態の初期化
+    # 状態初期化
     backup_status[guild_id] = {
         "started": True,
         "completed_channels": 0,
@@ -42,7 +44,9 @@ async def backup(interaction: discord.Interaction):
     }
 
     messages_data = []
-    async for message in channel.history(limit=None, oldest_first=True):
+    after_time = datetime.utcnow() - timedelta(days=days)
+
+    async for message in channel.history(limit=None, oldest_first=True, after=after_time):
         messages_data.append({
             "display_name": message.author.display_name,
             "avatar_url": message.author.display_avatar.url,
@@ -56,10 +60,10 @@ async def backup(interaction: discord.Interaction):
     backup_status[guild_id]["completed_channels"] = 1
     backup_status[guild_id]["last_updated"] = "完了"
 
-    # JSONに変換してファイルとして送信
+    # 保存・送信
     json_str = json.dumps(messages_data, indent=2, ensure_ascii=False)
-    file = discord.File(fp=io.BytesIO(json_str.encode("utf-8")), filename=f"backup_{channel.id}.json")
-    await interaction.followup.send("✅ バックアップが完了しました！", file=file)
+    file = discord.File(fp=io.BytesIO(json_str.encode("utf-8")), filename=f"backup_{channel.id}_last_{days}_days.json")
+    await interaction.followup.send(f"✅ 過去 {days} 日分のバックアップが完了しました！", file=file)
 
 # -------------------------------
 # 📊 ステータス確認コマンド
@@ -123,7 +127,7 @@ async def restore(interaction: discord.Interaction, file: discord.Attachment):
         except Exception as e:
             print(f"送信失敗: {e}")
 
-    # 並列で送信（復元高速化）
+    # 並列送信で高速復元
     tasks = [send_message_via_webhook(msg) for msg in messages_data]
     await asyncio.gather(*tasks)
 
@@ -136,6 +140,7 @@ async def restore(interaction: discord.Interaction, file: discord.Attachment):
     await interaction.followup.send(f"✅ 復元が完了しました！ ({len(messages_data)} 件)", ephemeral=True)
 
 # -------------------------------
-# 起動
+# 起動（必ず環境変数や秘密設定にしてください）
 # -------------------------------
-bot.run("MTM5MzQ1NzUwNjc4ODgzOTUzNw.GTfqQX.3aH9109-F1CTSJ1oSUlJZ1WXFvIH5Wcg5CUt7E")  
+bot.run("MTM5MzQ1NzUwNjc4ODgzOTUzNw.GTfqQX.3aH9109-F1CTSJ1oSUlJZ1WXFvIH5Wcg5CUt7E")
+
