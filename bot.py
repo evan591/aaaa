@@ -8,6 +8,10 @@ from datetime import datetime, timedelta
 import os
 import time
 
+@tree.command(name="ping", description="Botの応答速度を確認します")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("🏓 Pong!", ephemeral=True)
+
 # =====================
 # Bot 初期設定
 # =====================
