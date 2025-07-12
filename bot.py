@@ -257,6 +257,96 @@ async def restore(interaction: discord.Interaction, file: discord.Attachment):
         print(f"Webhook削除失敗: {e}")
 
     await interaction.followup.send(f"✅ 復元が完了しました！ ({len(messages_data)} 件)", ephemeral=True)
+
+import yt_dlp
+
+# =====================
+# 音楽再生用ヘルパー関数
+# =====================
+ytdl_format_options = {
+    "format": "bestaudio/best",
+    "outtmpl": "downloads/%(id)s.%(ext)s",
+    "quiet": True,
+    "no_warnings": True,
+    "default_search": "ytsearch",
+    "source_address": "0.0.0.0",
+}
+ffmpeg_options = {
+    "options": "-vn",
+}
+
+ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
+
+class YTDLSource(discord.PCMVolumeTransformer):
+    def __init__(self, source, *, data, volume=0.5):
+        super().__init__(source, volume)
+        self.data = data
+        self.title = data.get("title")
+        self.url = data.get("webpage_url")
+
+    @classmethod
+    async def from_url(cls, url, *, loop=None, stream=False):
+        loop = loop or asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+
+        if "entries" in data:
+            data = data["entries"][0]
+
+        filename = data["url"] if stream else ytdl.prepare_filename(data)
+        return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
+
+# =====================
+# /play コマンド（YouTube）
+# =====================
+@tree.command(name="play", description="YouTubeの音楽をVCで再生します")
+@app_commands.describe(url="YouTubeのURLまたは検索ワード")
+async def play(interaction: discord.Interaction, url: str):
+    voice = interaction.user.voice
+    if not voice:
+        await interaction.response.send_message("❌ VCに参加してから実行してください。", ephemeral=True)
+        return
+
+    await interaction.response.defer()
+
+    vc = interaction.guild.voice_client
+    if not vc:
+        try:
+            vc = await voice.channel.connect()
+        except Exception as e:
+            await interaction.followup.send(f"接続に失敗しました: {e}")
+            return
+
+    try:
+        player = await YTDLSource.from_url(url, loop=bot.loop, stream=True)
+        vc.stop()  # 前の再生を止める
+        vc.play(player, after=lambda e: print(f"再生終了: {e}" if e else "正常終了"))
+        await interaction.followup.send(f"🎶 再生中: **{player.title}**")
+    except Exception as e:
+        await interaction.followup.send(f"❌ 再生に失敗しました: {e}")
+
+# =====================
+# /stop コマンド
+# =====================
+@tree.command(name="stop", description="音楽の再生を停止します")
+async def stop(interaction: discord.Interaction):
+    vc = interaction.guild.voice_client
+    if vc and vc.is_playing():
+        vc.stop()
+        await interaction.response.send_message("⏹️ 再生を停止しました")
+    else:
+        await interaction.response.send_message("❌ 現在再生中の音楽はありません", ephemeral=True)
+
+# =====================
+# /leave コマンド
+# =====================
+@tree.command(name="leave", description="ボイスチャンネルから切断します")
+async def leave(interaction: discord.Interaction):
+    vc = interaction.guild.voice_client
+    if vc:
+        await vc.disconnect()
+        await interaction.response.send_message("👋 VCから切断しました")
+    else:
+        await interaction.response.send_message("❌ VCに接続していません", ephemeral=True)
     
 # =====================
 # 起動処理
