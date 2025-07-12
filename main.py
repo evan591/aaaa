@@ -9,6 +9,7 @@ import time
 import os
 from datetime import datetime, timedelta
 from discord.ext import tasks
+from yt_dlp import YoutubeDL
 
 # --- 初期設定 ---
 intents = discord.Intents.default()
