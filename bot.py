@@ -8,95 +8,63 @@ from datetime import datetime, timedelta
 import os
 import time
 
-
-# オセロ盤面サイズ
-BOARD_SIZE = 8
-
-# 初期化
-intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree
-
-# 石の定義
-EMPTY = "🟩"
+# =====================
+# ゲーム定義
+# =====================
+EMPTY = "🟩"  # 空きマス: 緑
 BLACK = "⚫"
 WHITE = "⚪"
 
-# 方向（8方向）
-DIRECTIONS = [(-1, -1), (-1, 0), (-1, 1),
-              (0, -1),         (0, 1),
-              (1, -1),  (1, 0), (1, 1)]
-
 class OthelloGame:
-    def __init__(self, player1: discord.User, player2: discord.User):
-        self.board = [[EMPTY for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
+    def __init__(self, player1, player2):
+        self.board = [[EMPTY for _ in range(8)] for _ in range(8)]
         self.board[3][3] = WHITE
         self.board[3][4] = BLACK
         self.board[4][3] = BLACK
         self.board[4][4] = WHITE
         self.players = [player1, player2]
-        self.turn = 0  # 0: player1 (black), 1: player2 (white)
-        self.finished = False
-
-    def current_player(self):
-        return self.players[self.turn]
-
-    def current_color(self):
-        return BLACK if self.turn == 0 else WHITE
+        self.current_turn = 0
 
     def display_board(self):
-        board_str = "　" + "".join(f"{i}" for i in range(BOARD_SIZE)) + "\n"
-        for i, row in enumerate(self.board):
-            board_str += f"{i} " + "".join(row) + "\n"
-        return board_str
+        return '\n'.join(' '.join(row) for row in self.board)
 
-    def is_valid_move(self, x, y):
-        if self.board[y][x] != EMPTY:
+    def in_bounds(self, x, y):
+        return 0 <= x < 8 and 0 <= y < 8
+
+    def current_player(self):
+        return self.players[self.current_turn % 2]
+
+    def current_color(self):
+        return BLACK if self.current_turn % 2 == 0 else WHITE
+
+    def make_move(self, x, y):
+        if not self.in_bounds(x, y) or self.board[y][x] != EMPTY:
             return False
 
-        current = self.current_color()
-        opponent = BLACK if current == WHITE else WHITE
+        color = self.current_color()
+        opponent = WHITE if color == BLACK else BLACK
+        directions = [(-1, -1), (-1, 0), (-1, 1),
+                      (0, -1),         (0, 1),
+                      (1, -1), (1, 0), (1, 1)]
+        flipped = []
 
-        for dx, dy in DIRECTIONS:
+        for dx, dy in directions:
             nx, ny = x + dx, y + dy
-            found_opponent = False
+            temp = []
+            while self.in_bounds(nx, ny) and self.board[ny][nx] == opponent:
+                temp.append((nx, ny))
+                nx += dx
+                ny += dy
+            if self.in_bounds(nx, ny) and self.board[ny][nx] == color and temp:
+                flipped.extend(temp)
 
-            while 0 <= nx < BOARD_SIZE and 0 <= ny < BOARD_SIZE:
-                if self.board[ny][nx] == opponent:
-                    found_opponent = True
-                    nx += dx
-                    ny += dy
-                elif self.board[ny][nx] == current and found_opponent:
-                    return True
-                else:
-                    break
-        return False
-
-    def place_stone(self, x, y):
-        if not self.is_valid_move(x, y):
+        if not flipped:
             return False
 
-        current = self.current_color()
-        opponent = BLACK if current == WHITE else WHITE
-
-        self.board[y][x] = current
-        for dx, dy in DIRECTIONS:
-            nx, ny = x + dx, y + dy
-            path = []
-
-            while 0 <= nx < BOARD_SIZE and 0 <= ny < BOARD_SIZE:
-                if self.board[ny][nx] == opponent:
-                    path.append((nx, ny))
-                    nx += dx
-                    ny += dy
-                elif self.board[ny][nx] == current:
-                    for px, py in path:
-                        self.board[py][px] = current
-                    break
-                else:
-                    break
-
-        self.turn = 1 - self.turn
+        self.board[y][x] = color
+        for nx, ny in flipped:
+            self.board[ny][nx] = color
+        self.current_turn += 1
         return True
 
     def count_pieces(self):
@@ -104,73 +72,62 @@ class OthelloGame:
         white = sum(row.count(WHITE) for row in self.board)
         return black, white
 
+# =====================
+# Discord Bot 設定
+# =====================
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents)
+tree = bot.tree
 
-games = {}  # guild_id -> OthelloGame
+games = {}  # channel_id: OthelloGame
 
 @tree.command(name="othello_start", description="オセロを開始します")
 @app_commands.describe(opponent="対戦相手")
-async def start_game(interaction: discord.Interaction, opponent: discord.User):
-    if interaction.guild_id in games:
-        await interaction.response.send_message("既にゲームが進行中です。", ephemeral=True)
+async def othello_start(interaction: discord.Interaction, opponent: discord.User):
+    if interaction.channel_id in games:
+        await interaction.response.send_message("⚠️ このチャンネルではすでにオセロが行われています。", ephemeral=True)
         return
 
-    if opponent == interaction.user:
-        await interaction.response.send_message("自分とは対戦できません。", ephemeral=True)
-        return
+    game = OthelloGame(interaction.user, opponent)
+    games[interaction.channel_id] = game
 
-    games[interaction.guild_id] = OthelloGame(interaction.user, opponent)
-    game = games[interaction.guild_id]
-    await interaction.response.send_message(
-        f"🟢 オセロ開始！\n"
-        f"{interaction.user.mention}（⚫） vs {opponent.mention}（⚪）\n\n"
-        f"現在の盤面:\n```{game.display_board()}```\n"
-        f"{game.current_player().mention} の番です（{game.current_color()}）"
-    )
+    await interaction.response.send_message(embed=create_board_embed(game, "🟢 オセロ開始！", f"{interaction.user.mention}（⚫） vs {opponent.mention}（⚪）"))
 
-@tree.command(name="othello_move", description="石を置きます（例: /othello_move x:2 y:3）")
-@app_commands.describe(x="横（0〜7）", y="縦（0〜7）")
-async def move(interaction: discord.Interaction, x: int, y: int):
-    game = games.get(interaction.guild_id)
+@tree.command(name="othello_move", description="指定位置に石を置きます")
+@app_commands.describe(x="X座標 (0-7)", y="Y座標 (0-7)")
+async def othello_move(interaction: discord.Interaction, x: int, y: int):
+    game = games.get(interaction.channel_id)
     if not game:
-        await interaction.response.send_message("ゲームが開始されていません。", ephemeral=True)
+        await interaction.response.send_message("❌ このチャンネルではオセロが開始されていません。", ephemeral=True)
         return
 
     if interaction.user != game.current_player():
-        await interaction.response.send_message("今はあなたの番ではありません。", ephemeral=True)
+        await interaction.response.send_message("❌ あなたの番ではありません。", ephemeral=True)
         return
 
-    if not (0 <= x < BOARD_SIZE and 0 <= y < BOARD_SIZE):
-        await interaction.response.send_message("無効な座標です。", ephemeral=True)
+    if not game.make_move(x, y):
+        await interaction.response.send_message("❌ 無効な手です。", ephemeral=True)
         return
 
-    if not game.place_stone(x, y):
-        await interaction.response.send_message("その位置には置けません。", ephemeral=True)
-        return
-
-    black_count, white_count = game.count_pieces()
-
-    await interaction.response.send_message(
-        f"✅ {interaction.user.mention} が ({x}, {y}) に石を置きました！\n"
-        f"```{game.display_board()}```\n"
-        f"⚫: {black_count}　⚪: {white_count}\n"
-        f"次は {game.current_player().mention} の番です（{game.current_color()}）"
-    )
+    await interaction.response.send_message(embed=create_board_embed(game, f"{interaction.user.name} が ({x}, {y}) に石を置きました！"))
 
 @tree.command(name="othello_end", description="現在のオセロゲームを終了します")
-async def end_game(interaction: discord.Interaction):
-    if interaction.guild_id not in games:
-        await interaction.response.send_message("終了するゲームはありません。", ephemeral=True)
-        return
+async def othello_end(interaction: discord.Interaction):
+    if interaction.channel_id in games:
+        del games[interaction.channel_id]
+        await interaction.response.send_message("🛑 オセロゲームを終了しました。")
+    else:
+        await interaction.response.send_message("⚠️ 終了するオセロゲームがありません。", ephemeral=True)
 
-    del games[interaction.guild_id]
-    await interaction.response.send_message("ゲームを終了しました。")
-
-@bot.event
-async def on_ready():
-    await tree.sync()
-    print(f"ログイン完了: {bot.user}")
-
-
+def create_board_embed(game: OthelloGame, title: str, description: str = "") -> discord.Embed:
+    black_count, white_count = game.count_pieces()
+    embed = discord.Embed(title=title, description=description, color=discord.Color.green())
+    embed.add_field(name="盤面", value=f"```\n{game.display_board()}```", inline=False)
+    embed.add_field(name="石の数", value=f"⚫: {black_count}　⚪: {white_count}", inline=False)
+    embed.set_footer(text=f"{game.current_player().name}（{game.current_color()}）の番です")
+    return embed
+  
 
 intents = discord.Intents.default()
 intents.message_content = True
