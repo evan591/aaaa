@@ -4,3 +4,4 @@ python-dotenv
 pyodbc
 loguru
 minio
+yt_dlp
