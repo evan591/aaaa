@@ -367,7 +367,80 @@ async def load_template(interaction: discord.Interaction, file: discord.Attachme
             print(f"チャンネル作成失敗: {e}")
 
     await interaction.followup.send("✅ サーバー構成の復元が完了しました！", ephemeral=True)
- 
+    
+ # =====================
+# 自動バックアップ機能
+# =====================
+
+backup_schedulers = {}  # {guild_id: user_id}
+
+@tree.command(name="enable_auto_backup", description="自動バックアップを有効化します（実行者にDMで送信）")
+async def enable_auto_backup(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+
+    guild_id = interaction.guild_id
+    user_id = interaction.user.id
+    backup_schedulers[guild_id] = user_id
+
+    await interaction.response.send_message("✅ 自動バックアップを有効化しました（1週間ごと）", ephemeral=True)
+
+@tree.command(name="disable_auto_backup", description="自動バックアップを無効化します")
+async def disable_auto_backup(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+
+    guild_id = interaction.guild_id
+    if guild_id in backup_schedulers:
+        del backup_schedulers[guild_id]
+        await interaction.response.send_message("🛑 自動バックアップを無効化しました。", ephemeral=True)
+    else:
+        await interaction.response.send_message("⚠️ 自動バックアップは有効化されていません。", ephemeral=True)
+
+@tasks.loop(hours=24)
+async def weekly_backup_task():
+    now = datetime.utcnow()
+    for guild_id, user_id in backup_schedulers.items():
+        # 毎週土曜日 00:00 UTC に実行
+        if now.weekday() == 5 and now.hour == 0:
+            guild = bot.get_guild(guild_id)
+            user = bot.get_user(user_id)
+
+            if guild and user:
+                for channel in guild.text_channels:
+                    try:
+                        messages_data = []
+                        after_time = datetime.utcnow() - timedelta(days=7)
+
+                        async for message in channel.history(limit=None, oldest_first=True, after=after_time):
+                            messages_data.append({
+                                "display_name": message.author.display_name,
+                                "avatar_url": message.author.display_avatar.url,
+                                "content": message.content,
+                                "created_at": str(message.created_at),
+                                "attachments": [a.url for a in message.attachments],
+                                "embeds": [embed.to_dict() for embed in message.embeds],
+                            })
+
+                        if not messages_data:
+                            continue
+
+                        json_str = json.dumps(messages_data, indent=2, ensure_ascii=False)
+                        file = discord.File(fp=io.BytesIO(json_str.encode("utf-8")),
+                                            filename=f"auto_backup_{guild.name}_{channel.name}.json")
+
+                        await user.send(
+                            f"📦 サーバー「{guild.name}」のチャンネル「{channel.name}」の1週間分の自動バックアップです。",
+                            file=file
+                        )
+                    except Exception as e:
+                        print(f"[ERROR] 自動バックアップ失敗 ({guild_id}): {e}")
+
+@weekly_backup_task.before_loop
+async def before_backup():
+    await bot.wait_until_ready()
+
+weekly_backup_task.start()
 
 # =====================
 # 起動処理
