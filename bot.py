@@ -1,49 +1,27 @@
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-import asyncio
+import os
 import json
 import io
-from datetime import datetime, timedelta
-import os
+import asyncio
 import time
-import yt_dlp
+from datetime import datetime, timedelta
 
-
+# ========= INTENTS & BOT 初期化 =========
 intents = discord.Intents.default()
 intents.message_content = True
-
-bot = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree  # ← 🔥 これがないと @tree.command は使えません！
-
-@tree.command(name="ping", description="Botの応答速度を確認します")
-async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message("🏓 Pong!", ephemeral=True)
-
-@bot.event
-async def on_ready():
-    await tree.sync()
-    print(f"Logged in as {bot.user}")
-
-
-# =====================
-# Bot 初期設定
-# =====================
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents)
 tree = bot.tree
 
-# =====================
-# スパム対策関係
-# =====================
-user_message_log = {}  # ユーザーのメッセージ履歴 {user_id: [msg1, msg2, ...]}
+# ========= グローバル変数 =========
 spam_data = {"warnings": {}, "last_reset": ""}
+user_message_log = {}
+backup_status = {}
+auto_backup_enabled = True
 WARNING_FILE = "spam_warnings.json"
 
-# -----------------
-# 保存・読み込み処理
-# -----------------
+# ========= スパム対策（保存・読み込み） =========
 def save_warnings():
     with open(WARNING_FILE, "w", encoding="utf-8") as f:
         json.dump(spam_data, f)
@@ -56,9 +34,6 @@ def load_warnings():
     else:
         save_warnings()
 
-# -----------------
-# 月ごとのリセット
-# -----------------
 def reset_if_new_month():
     now = datetime.utcnow()
     current = now.strftime("%Y-%m")
@@ -67,6 +42,7 @@ def reset_if_new_month():
         spam_data["last_reset"] = current
         save_warnings()
 
+# ========= スパム検出 =========
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -74,10 +50,9 @@ async def on_message(message):
 
     user_id = str(message.author.id)
     now = time.time()
-
     log = user_message_log.setdefault(user_id, [])
     log.append((message.content, now))
-    log[:] = [(content, t) for content, t in log if now - t <= 5]
+    log[:] = [(c, t) for c, t in log if now - t <= 5]
 
     counts = {}
     for content, t in log:
@@ -89,93 +64,45 @@ async def on_message(message):
             spam_data["warnings"][user_id] = warnings
             save_warnings()
 
-            if warnings >= 5:
-                timeout_duration = 3600  # 1時間
-            else:
-                timeout_duration = 600  # 10分
-
+            timeout_duration = 3600 if warnings >= 5 else 600
             try:
                 await message.author.timeout(discord.utils.utcnow() + timedelta(seconds=timeout_duration))
                 await message.channel.send(
-                    f"🚨 {message.author.mention} はスパム検出によりタイムアウトされました。警告回数: {warnings} 回\n"
-                    f"🚨 {message.author.mention} has been timed out for spamming. Warning count: {warnings} times"
+                    f"🚨 {message.author.mention} タイムアウトされました。警告: {warnings} 回"
                 )
             except Exception as e:
-                print("タイムアウト失敗:", e)
+                print(f"タイムアウト失敗: {e}")
             break
 
     await bot.process_commands(message)
 
-# =====================
-# スラッシュコマンド
-# =====================
-
-@tree.command(name="warns", description="特定ユーザーのスパム警告数を表示します")
-@app_commands.describe(user="警告数を確認したいユーザー")
+# ========= スパムコマンド =========
+@tree.command(name="warns", description="スパム警告数確認")
+@app_commands.describe(user="対象ユーザー")
 async def warns(interaction: discord.Interaction, user: discord.User):
     load_warnings()
-    user_id = str(user.id)
-    warn_count = spam_data["warnings"].get(user_id, 0)
-    return interaction.response.send_message(
-        f"🛡️ {user.mention} の警告回数: {warn_count} 回\n"
-        f"🛡️ Warning count for {user.mention}: {warn_count} times",
-        ephemeral=True
-    )
+    warn_count = spam_data["warnings"].get(str(user.id), 0)
+    await interaction.response.send_message(f"{user.mention} の警告数: {warn_count}", ephemeral=True)
 
-@tree.command(name="resetwarns", description="特定ユーザーのスパム警告数をリセットします（管理者専用）")
-@app_commands.describe(user="警告をリセットする対象ユーザー")
+@tree.command(name="resetwarns", description="警告数をリセット（管理者）")
+@app_commands.describe(user="対象ユーザー")
 async def resetwarns(interaction: discord.Interaction, user: discord.User):
     if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ 管理者権限が必要です。\n❌ Administrator permission required.", ephemeral=True)
-
-    user_id = str(user.id)
-    spam_data["warnings"].pop(user_id, None)
+        return await interaction.response.send_message("管理者専用コマンドです。", ephemeral=True)
+    spam_data["warnings"].pop(str(user.id), None)
     save_warnings()
+    await interaction.response.send_message(f"{user.mention} の警告数をリセットしました。", ephemeral=True)
 
-    await interaction.response.send_message(
-        f"♻️ {user.mention} の警告数をリセットしました。\n"
-        f"♻️ Reset warning count for {user.mention}.", ephemeral=True
-    )
-
-@tree.command(name="help", description="このBotの機能一覧を表示します")
-async def help_command(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        """**📘 Botコマンド一覧 / Command List:**
-・/backup [days] - メッセージをバックアップ
-・/restore [file] - メッセージ復元
-・/status - バックアップ進捗確認
-・/warns [user] - スパム警告数確認
-・/resetwarns [user] - スパム警告リセット（管理者）
-・/help - この一覧を表示
-
-💡 スパム対策は自動で動作します（5秒以内に同じ発言を5回で警告＋タイムアウト）
-""",
-        ephemeral=True
-    )
-
-# =====================
-# バックアップ機能
-# =====================
-backup_status = {}
-
-@tree.command(name="backup", description="このチャンネルのメッセージをバックアップします")
-@app_commands.describe(days="バックアップ対象とする過去の日数")
+# ========= バックアップ & 復元 =========
+@tree.command(name="backup", description="メッセージをバックアップ")
+@app_commands.describe(days="過去何日分を保存するか")
 async def backup(interaction: discord.Interaction, days: int = 7):
-    await interaction.response.send_message(f"📦 過去 {days} 日分のバックアップを開始します...", ephemeral=True)
+    await interaction.response.send_message(f"📦 過去 {days} 日のメッセージを保存中...", ephemeral=True)
     channel = interaction.channel
     guild_id = interaction.guild_id
-
-    backup_status[guild_id] = {
-        "started": True,
-        "completed_channels": 0,
-        "total_channels": 1,
-        "messages": 0,
-        "last_updated": None
-    }
-
-    messages_data = []
     after_time = datetime.utcnow() - timedelta(days=days)
 
+    messages_data = []
     async for message in channel.history(limit=None, oldest_first=True, after=after_time):
         messages_data.append({
             "display_name": message.author.display_name,
@@ -185,251 +112,186 @@ async def backup(interaction: discord.Interaction, days: int = 7):
             "attachments": [a.url for a in message.attachments],
             "embeds": [embed.to_dict() for embed in message.embeds],
         })
-        backup_status[guild_id]["messages"] += 1
 
-    backup_status[guild_id]["completed_channels"] = 1
-    backup_status[guild_id]["last_updated"] = "完了"
+    backup_status[guild_id] = {
+        "started": True,
+        "completed_channels": 1,
+        "total_channels": 1,
+        "messages": len(messages_data),
+        "last_updated": str(datetime.utcnow())
+    }
 
-    json_str = json.dumps(messages_data, indent=2, ensure_ascii=False)
-    file = discord.File(fp=io.BytesIO(json_str.encode("utf-8")), filename=f"backup_{channel.id}_last_{days}_days.json")
-    await interaction.followup.send(f"✅ 過去 {days} 日分のバックアップが完了しました！", file=file)
+    json_str = json.dumps(messages_data, ensure_ascii=False, indent=2)
+    file = discord.File(io.BytesIO(json_str.encode("utf-8")), filename=f"backup_{channel.id}.json")
+    await interaction.followup.send("✅ バックアップ完了！", file=file)
 
-@tree.command(name="status", description="現在のバックアップ状況を確認します")
+@tree.command(name="status", description="バックアップ状況を確認")
 async def status(interaction: discord.Interaction):
-    guild_id = interaction.guild_id
-    status = backup_status.get(guild_id)
-
-    if not status or not status.get("started"):
-        await interaction.response.send_message("❌ 現在進行中のバックアップはありません。", ephemeral=True)
-        return
-
-    progress = (
-        f"📝 チャンネル: {status['completed_channels']} / {status['total_channels']}\n"
-        f"💬 メッセージ数: {status['messages']}\n"
-        f"📅 最終更新: {status['last_updated']}"
+    s = backup_status.get(interaction.guild_id)
+    if not s:
+        return await interaction.response.send_message("現在バックアップは行われていません。", ephemeral=True)
+    await interaction.response.send_message(
+        f"📊 チャンネル: {s['completed_channels']}/{s['total_channels']}\n"
+        f"💬 メッセージ: {s['messages']}\n"
+        f"🕒 更新: {s['last_updated']}", ephemeral=True
     )
-    await interaction.response.send_message(f"📊 バックアップ進行状況:\n{progress}", ephemeral=True)
 
-@tree.command(name="restore", description="バックアップファイルからメッセージを復元します")
-@app_commands.describe(file="バックアップJSONファイルを添付してください")
+@tree.command(name="restore", description="バックアップを復元（Webhook使用）")
+@app_commands.describe(file="バックアップファイル（.json）")
 async def restore(interaction: discord.Interaction, file: discord.Attachment):
     if not file.filename.endswith(".json"):
-        await interaction.response.send_message("❌ 有効なJSONファイルをアップロードしてください。", ephemeral=True)
-        return
+        return await interaction.response.send_message("JSONファイルをアップロードしてください。", ephemeral=True)
 
-    await interaction.response.send_message("🔄 復元を開始します...", ephemeral=True)
-
+    await interaction.response.send_message("復元を開始中...", ephemeral=True)
     try:
         content = await file.read()
-        messages_data = json.loads(content.decode("utf-8"))
+        messages = json.loads(content.decode("utf-8"))
     except Exception as e:
-        await interaction.followup.send(f"❌ 復元ファイルの読み込みに失敗しました: {e}", ephemeral=True)
-        return
+        return await interaction.followup.send(f"読み込み失敗: {e}", ephemeral=True)
 
     try:
-        webhook = await interaction.channel.create_webhook(name="復元Bot")
+        webhook = await interaction.channel.create_webhook(name="復元Webhook")
     except discord.Forbidden:
-        await interaction.followup.send("❌ Webhookを作成できません。BotにWebhookの権限があるか確認してください。", ephemeral=True)
-        return
+        return await interaction.followup.send("Webhook作成に失敗しました。", ephemeral=True)
 
-    async def send_message_via_webhook(msg):
-        display_name = msg.get("display_name", "Unknown")
-        avatar_url = msg.get("avatar_url", None)
-        content = msg.get("content", "")
-        embeds = [discord.Embed.from_dict(e) for e in msg.get("embeds", [])]
-
+    async def send_message(msg):
         try:
             await webhook.send(
-                content=content if content else None,
-                username=display_name,
-                avatar_url=avatar_url,
-                embeds=embeds,
+                content=msg["content"] or None,
+                username=msg["display_name"],
+                avatar_url=msg["avatar_url"],
+                embeds=[discord.Embed.from_dict(e) for e in msg.get("embeds", [])],
                 wait=True
             )
         except Exception as e:
             print(f"送信失敗: {e}")
 
-    tasks = [send_message_via_webhook(msg) for msg in messages_data]
-    await asyncio.gather(*tasks)
+    await asyncio.gather(*(send_message(m) for m in messages))
+    await webhook.delete()
+    await interaction.followup.send(f"✅ 復元完了！({len(messages)} 件)", ephemeral=True)
 
-    try:
-        await webhook.delete()
-    except Exception as e:
-        print(f"Webhook削除失敗: {e}")
-
-    await interaction.followup.send(f"✅ 復元が完了しました！ ({len(messages_data)} 件)", ephemeral=True)
-    
-# =====================
-# サーバーテンプレート機能
-# =====================
-
-@tree.command(name="save_template", description="現在のサーバー構成（ロール・チャンネル）をテンプレートとして保存します")
+# ========= テンプレート機能 =========
+@tree.command(name="save_template", description="ロール・チャンネル構成を保存")
 async def save_template(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        return await interaction.response.send_message("管理者専用", ephemeral=True)
 
     guild = interaction.guild
+    data = {"roles": [], "categories": [], "channels": []}
 
-    data = {
-        "roles": [],
-        "categories": [],
-        "channels": []
-    }
-
-    # ロール情報
     for role in guild.roles:
-        if role.is_default():  # @everyone はスキップ
-            continue
+        if role.is_default(): continue
         data["roles"].append({
             "name": role.name,
             "permissions": role.permissions.value,
             "color": role.color.value,
             "hoist": role.hoist,
-            "mentionable": role.mentionable
+            "mentionable": role.mentionable,
         })
 
-    # カテゴリ情報
     for category in guild.categories:
         data["categories"].append({"name": category.name, "position": category.position})
 
-    # チャンネル情報（カテゴリ所属含む）
     for channel in guild.channels:
-        if isinstance(channel, discord.TextChannel):
-            data["channels"].append({
-                "type": "text",
-                "name": channel.name,
-                "category": channel.category.name if channel.category else None,
-                "position": channel.position
-            })
-        elif isinstance(channel, discord.VoiceChannel):
-            data["channels"].append({
-                "type": "voice",
-                "name": channel.name,
-                "category": channel.category.name if channel.category else None,
-                "position": channel.position
-            })
+        ch_data = {
+            "type": "text" if isinstance(channel, discord.TextChannel) else "voice",
+            "name": channel.name,
+            "category": channel.category.name if channel.category else None,
+            "position": channel.position
+        }
+        data["channels"].append(ch_data)
 
-    json_str = json.dumps(data, indent=2, ensure_ascii=False)
-    file = discord.File(fp=io.BytesIO(json_str.encode("utf-8")), filename=f"{guild.name}_template.json")
-    await interaction.response.send_message("✅ サーバーテンプレートを保存しました！", file=file, ephemeral=True)
+    json_str = json.dumps(data, ensure_ascii=False, indent=2)
+    file = discord.File(io.BytesIO(json_str.encode("utf-8")), filename=f"{guild.name}_template.json")
+    await interaction.response.send_message("✅ テンプレート保存完了", file=file, ephemeral=True)
 
-
-@tree.command(name="load_template", description="テンプレートファイルからロール・チャンネルを復元します")
-@app_commands.describe(file="テンプレートJSONファイルを添付してください")
+@tree.command(name="load_template", description="テンプレートから復元")
+@app_commands.describe(file="テンプレートファイル（.json）")
 async def load_template(interaction: discord.Interaction, file: discord.Attachment):
     if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        return await interaction.response.send_message("管理者専用", ephemeral=True)
 
-    if not file.filename.endswith(".json"):
-        return await interaction.response.send_message("❌ 有効なテンプレートファイル（.json）をアップロードしてください。", ephemeral=True)
-
-    await interaction.response.send_message("🔧 サーバー構成の復元を開始します...", ephemeral=True)
+    await interaction.response.send_message("復元中...", ephemeral=True)
 
     try:
-        content = await file.read()
-        template = json.loads(content.decode("utf-8"))
+        template = json.loads((await file.read()).decode("utf-8"))
     except Exception as e:
-        return await interaction.followup.send(f"❌ テンプレート読み込みに失敗しました: {e}", ephemeral=True)
+        return await interaction.followup.send(f"読み込み失敗: {e}", ephemeral=True)
 
     guild = interaction.guild
+    category_map = {}
 
-    # ロール復元（上から順に作成）
-    for role_data in template.get("roles", []):
+    for r in template["roles"]:
         try:
             await guild.create_role(
-                name=role_data["name"],
-                permissions=discord.Permissions(role_data["permissions"]),
-                color=discord.Color(role_data["color"]),
-                hoist=role_data["hoist"],
-                mentionable=role_data["mentionable"]
+                name=r["name"],
+                permissions=discord.Permissions(r["permissions"]),
+                color=discord.Color(r["color"]),
+                hoist=r["hoist"],
+                mentionable=r["mentionable"]
             )
         except Exception as e:
             print(f"ロール作成失敗: {e}")
 
-    # カテゴリ作成
-    categories_map = {}
-    for cat_data in sorted(template.get("categories", []), key=lambda x: x["position"]):
+    for c in sorted(template["categories"], key=lambda x: x["position"]):
         try:
-            category = await guild.create_category(name=cat_data["name"])
-            categories_map[cat_data["name"]] = category
+            obj = await guild.create_category(c["name"])
+            category_map[c["name"]] = obj
         except Exception as e:
             print(f"カテゴリ作成失敗: {e}")
 
-    # チャンネル作成
-    for ch in template.get("channels", []):
+    for ch in template["channels"]:
         try:
-            category = categories_map.get(ch["category"]) if ch["category"] else None
+            cat = category_map.get(ch["category"]) if ch["category"] else None
             if ch["type"] == "text":
-                await guild.create_text_channel(name=ch["name"], category=category)
-            elif ch["type"] == "voice":
-                await guild.create_voice_channel(name=ch["name"], category=category)
+                await guild.create_text_channel(name=ch["name"], category=cat)
+            else:
+                await guild.create_voice_channel(name=ch["name"], category=cat)
         except Exception as e:
             print(f"チャンネル作成失敗: {e}")
 
-    await interaction.followup.send("✅ サーバー構成の復元が完了しました！", ephemeral=True)
-    
- # =====================
-# 自動バックアップ機能
-# =====================
+    await interaction.followup.send("✅ サーバー構成復元完了", ephemeral=True)
 
-intents = discord.Intents.default()
-bot = commands.Bot(command_prefix='!', intents=intents)
-tree = bot.tree
-
-auto_backup_enabled = True  # 🔄 自動バックアップのオンオフ切り替え用フラグ
-
-@tasks.loop(hours=168)  # 毎週（168時間）実行
+# ========= 自動バックアップタスク =========
+@tasks.loop(hours=168)
 async def weekly_backup_task():
-    print("🔄 バックアップを実行中...")
-    # 実際のバックアップ処理をここに記述
+    print("🔄 自動バックアップ実行（タスク内容は実装してください）")
 
+# ========= on_ready =========
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user}!")
+    reset_if_new_month()
+    load_warnings()
     try:
-        synced = await tree.sync()
-        print(f"✅ Synced {len(synced)} slash commands.")
+        await tree.sync()
+        print(f"✅ Synced {len(await tree.sync())} commands")
     except Exception as e:
         print(f"⚠️ Sync failed: {e}")
-    
     if auto_backup_enabled and not weekly_backup_task.is_running():
         weekly_backup_task.start()
         print("▶️ 自動バックアップ開始")
 
-# 🔧 スラッシュコマンドで自動バックアップ ON/OFF を切り替え
-@tree.command(name="backup_on", description="自動バックアップを有効化します。")
+# ========= 自動バックアップ ON/OFF =========
+@tree.command(name="backup_on", description="自動バックアップを有効化")
 async def backup_on(interaction: discord.Interaction):
     global auto_backup_enabled
     auto_backup_enabled = True
     if not weekly_backup_task.is_running():
         weekly_backup_task.start()
-    await interaction.response.send_message("✅ 自動バックアップを有効にしました。")
+    await interaction.response.send_message("✅ 自動バックアップを有効化", ephemeral=True)
 
-@tree.command(name="backup_off", description="自動バックアップを無効化します。")
+@tree.command(name="backup_off", description="自動バックアップを無効化")
 async def backup_off(interaction: discord.Interaction):
     global auto_backup_enabled
     auto_backup_enabled = False
     if weekly_backup_task.is_running():
         weekly_backup_task.cancel()
-    await interaction.response.send_message("🛑 自動バックアップを無効にしました。")
-# =====================
-# 起動処理
-# =====================
+    await interaction.response.send_message("🛑 自動バックアップを無効化", ephemeral=True)
 
-
-@bot.event
-async def on_ready():
-    print(f"✅ Logged in as {bot.user}!")
-    try:
-        synced = await tree.sync()
-        print(f"✅ Synced {len(synced)} slash commands.")
-    except Exception as e:
-        print(f"⚠️ Sync failed: {e}")
-
-# 起動（環境変数からトークン取得）
+# ========= Bot 起動 =========
 token = os.getenv("DISCORD_BOT_TOKEN")
 if not token:
-    print("❌ DISCORD_BOT_TOKEN が設定されていません。Koyebの環境変数に設定してください。")
+    print("❌ DISCORD_BOT_TOKEN が設定されていません。")
 else:
-    print("🟢 Starting bot...")
+    print("🟢 Bot起動中...")
     bot.run(token)
