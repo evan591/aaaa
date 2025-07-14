@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI
 import threading
 import uvicorn
+from discord import ui
 
 # --- BotとIntentsの初期化 ---
 intents = discord.Intents.default()
