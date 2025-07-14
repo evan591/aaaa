@@ -15,5 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # アプリコードのコピー
 COPY . .
 
+# server port
+EXPOSE 8080
+
 # 起動コマンド
 CMD ["python", "bot.py"]
