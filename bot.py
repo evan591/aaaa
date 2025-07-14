@@ -8,6 +8,9 @@ import asyncio
 import time
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
+import threading
+import uvicorn
+from fastapi import FastAPI
 # ========= INTENTS & BOT 初期化 =========
 intents = discord.Intents.default()
 intents.message_content = True
