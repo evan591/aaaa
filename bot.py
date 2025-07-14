@@ -405,6 +405,7 @@ else:
 async def on_ready():
     await load_warnings()
     await reset_if_new_month()
+    await tree.sync()
     try:
         synced = await tree.sync()
         print(f"✅ Synced {len(synced)} commands.")
