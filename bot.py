@@ -500,6 +500,34 @@ async def backup_off(interaction: discord.Interaction):
         weekly_backup_task.cancel()
     await interaction.response.send_message("🛑 自動バックアップを無効化", ephemeral=True)
 
+# FastAPIアプリ（Koyebヘルスチェック用）
+app = FastAPI()
+
+@app.get("/")
+def read_root():
+    return {"status": "alive"}
+
+def run_api():
+    uvicorn.run(app, host="0.0.0.0", port=8080)
+
+# FastAPIを別スレッドで起動
+threading.Thread(target=run_api).start()
+
+# Discord Bot 起動部分
+intents = discord.Intents.default()
+intents.message_content = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
+    update_data.start()
+
+@tasks.loop(hours=1)
+async def update_data():
+    print("Hourly update task")
+
 # ========= Bot 起動 =========
 token = os.getenv("DISCORD_BOT_TOKEN")
 if not token:
