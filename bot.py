@@ -31,11 +31,11 @@ NG_WORDS = ["ばか", "うざい", "死ね"]
 FUNNY_WORDS = ["草", "www", "笑った"]
 
 # ========= スパム対策（保存・読み込み） =========
-def save_warnings():
+async def save_warnings():
     with open(WARNING_FILE, "w", encoding="utf-8") as f:
         json.dump(spam_data, f)
 
-def load_warnings():
+async def load_warnings():
     global spam_data
     if os.path.exists(WARNING_FILE):
         with open(WARNING_FILE, "r", encoding="utf-8") as f:
@@ -43,7 +43,7 @@ def load_warnings():
     else:
         save_warnings()
 
-def reset_if_new_month():
+async def reset_if_new_month():
     now = datetime.utcnow()
     current = now.strftime("%Y-%m")
     if spam_data.get("last_reset") != current:
@@ -52,20 +52,20 @@ def reset_if_new_month():
         save_warnings()
 
 # ========= 株取引データの保存・読み込み =========
-def load_stock_data():
+async def load_stock_data():
     if not os.path.exists(STOCK_FILE):
         with open(STOCK_FILE, "w") as f:
             json.dump({"users": {}, "prices": {}, "history": {}}, f)
     with open(STOCK_FILE, "r") as f:
         return json.load(f)
 
-def save_stock_data():
+async def save_stock_data():
     with open(STOCK_FILE, "w") as f:
         json.dump(stock_data, f, indent=2)
 
 stock_data = load_stock_data()
 
-def ensure_user(user_id):
+async def ensure_user(user_id):
     if user_id not in stock_data["users"]:
         stock_data["users"][user_id] = {"currency": CURRENCY_START, "stocks": {}}
 
@@ -234,11 +234,11 @@ auto_backup_enabled = True
 WARNING_FILE = "spam_warnings.json"
 
 # ========= スパム対策（保存・読み込み） =========
-def save_warnings():
+async def save_warnings():
     with open(WARNING_FILE, "w", encoding="utf-8") as f:
         json.dump(spam_data, f)
 
-def load_warnings():
+async def load_warnings():
     global spam_data
     if os.path.exists(WARNING_FILE):
         with open(WARNING_FILE, "r", encoding="utf-8") as f:
@@ -246,7 +246,7 @@ def load_warnings():
     else:
         save_warnings()
 
-def reset_if_new_month():
+async def reset_if_new_month():
     now = datetime.utcnow()
     current = now.strftime("%Y-%m")
     if spam_data.get("last_reset") != current:
