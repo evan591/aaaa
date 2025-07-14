@@ -400,3 +400,13 @@ if not token:
 else:
     print("🟢 Bot起動中...")
     bot.run(token)
+    
+@bot.event
+async def on_ready():
+    await load_warnings()
+    await reset_if_new_month()
+    try:
+        synced = await tree.sync()
+        print(f"✅ Synced {len(synced)} commands.")
+    except Exception as e:
+        print(f"⚠️ コマンド同期エラー: {e}")
