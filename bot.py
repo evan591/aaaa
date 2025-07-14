@@ -39,16 +39,6 @@ NEWS_EVENTS = [
     ("市場は安定状態", 1.00)
 ]
 
-# --- FastAPI起動用 ---
-app = FastAPI()
-@app.get("/")
-def read_root():
-    return {"status": "alive"}
-
-def run_api():
-    uvicorn.run(app, host="0.0.0.0", port=8080)
-threading.Thread(target=run_api).start()
-
 # --- スパムデータの読み書き ---
 async def save_warnings():
     with open(WARNING_FILE, "w", encoding="utf-8") as f:
