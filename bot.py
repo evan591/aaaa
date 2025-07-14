@@ -405,7 +405,7 @@ else:
 async def on_ready():
     await load_warnings()
     await reset_if_new_month()
-    await tree.sync()
+    await tree.sync(guild=discord.Object(id=1276995395876028497))
     try:
         synced = await tree.sync()
         print(f"✅ Synced {len(synced)} commands.")
