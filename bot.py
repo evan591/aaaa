@@ -171,7 +171,7 @@ with open(STOCK_FILE, "r") as f:
 # ================== 株主配当ON/OFF ==================
 dividend_enabled = True
 
-@tree.command(name="dividend_toggle")
+@tree.command(name="dividend_toggle", description="株主配当を有効化・無効化", guild=discord.Object(id=1276995395876028497))
 async def dividend_toggle(interaction: discord.Interaction):
     global dividend_enabled
     dividend_enabled = not dividend_enabled
@@ -233,11 +233,11 @@ class StockMenu(ui.View):
                 msg += f"{i}. {uname}: {total:.2f} G\n"
             await interaction.response.send_message(msg, ephemeral=True)
 
-@tree.command(name="stock_menu", description="株式メニューを表示します")
+@tree.command(name="stock_menu", description="株式メニューを表示します", guild=discord.Object(id=1276995395876028497))
 async def stock_menu(interaction: discord.Interaction):
     await interaction.response.send_message("📊 株式メニューはこちら！", view=StockMenu(), ephemeral=True)
     
-@tree.command(name="stock_buy", description="株を購入します")
+@tree.command(name="stock_buy", description="株を購入します", guild=discord.Object(id=1276995395876028497))
 @app_commands.describe(target="誰の株を買うか", amount="購入株数")
 async def stock_buy(interaction: discord.Interaction, target: discord.User, amount: int):
     buyer = str(interaction.user.id)
@@ -253,7 +253,7 @@ async def stock_buy(interaction: discord.Interaction, target: discord.User, amou
     await save_stock_data()
     await interaction.response.send_message(f"✅ {target.display_name} の株を {amount} 株 購入しました。")
 
-@tree.command(name="stock_sell", description="株を売却します")
+@tree.command(name="stock_sell", description="株を売却します", guild=discord.Object(id=1276995395876028497))
 @app_commands.describe(target="誰の株を売るか", amount="売却株数")
 async def stock_sell(interaction: discord.Interaction, target: discord.User, amount: int):
     seller = str(interaction.user.id)
@@ -268,17 +268,17 @@ async def stock_sell(interaction: discord.Interaction, target: discord.User, amo
     await save_stock_data()
     await interaction.response.send_message(f"💰 {target.display_name} の株を {amount} 株 売却し、{price * amount:.2f} G を得ました。")
 
-@tree.command(name="ping", description="Botの応答速度を測定")
+@tree.command(name="ping", description="Botの応答速度を測定", guild=discord.Object(id=1276995395876028497))
 async def ping(interaction: discord.Interaction):
     latency = bot.latency * 1000
     await interaction.response.send_message(f"🏓 Pong! 応答速度: {latency:.2f} ms")
 
-@tree.command(name="uptime", description="Botの稼働時間を表示")
+@tree.command(name="uptime", description="Botの稼働時間を表示", guild=discord.Object(id=1276995395876028497))
 async def uptime(interaction: discord.Interaction):
     uptime = datetime.utcnow() - bot.launch_time
     await interaction.response.send_message(f"🕒 稼働時間: {str(uptime).split('.')[0]}")
 
-@tree.command(name="userinfo", description="ユーザー情報を表示")
+@tree.command(name="userinfo", description="ユーザー情報を表示", guild=discord.Object(id=1276995395876028497))
 @app_commands.describe(user="調べたいユーザー")
 async def userinfo(interaction: discord.Interaction, user: discord.User):
     embed = discord.Embed(title="ユーザー情報", description=f"{user.mention} の情報", color=discord.Color.blue())
@@ -288,7 +288,7 @@ async def userinfo(interaction: discord.Interaction, user: discord.User):
     embed.set_thumbnail(url=user.display_avatar.url)
     await interaction.response.send_message(embed=embed)
 
-@tree.command(name="serverinfo", description="サーバー情報を表示")
+@tree.command(name="serverinfo", description="サーバー情報を表示", guild=discord.Object(id=1276995395876028497))
 async def serverinfo(interaction: discord.Interaction):
     guild = interaction.guild
     embed = discord.Embed(title=guild.name, description="サーバー情報", color=discord.Color.green())
@@ -339,7 +339,7 @@ class StockMenuView(discord.ui.View):
         super().__init__()
         self.add_item(StockMenu())
 
-@tree.command(name="stock_gui", description="株式管理GUIを表示")
+@tree.command(name="stock_gui", description="株式管理GUIを表示", guild=discord.Object(id=1276995395876028497))
 async def stock_gui(interaction: discord.Interaction):
     await interaction.response.send_message("📊 操作を選んでください：", view=StockMenuView(), ephemeral=True)
 
@@ -389,7 +389,7 @@ class SelectMenu(Select):
                 msg += f" - {user.display_name}: {count} 株（{price:.2f} G）\n"
             await interaction.response.send_message(msg)
 
-@tree.command(name="menu", description="株式メニューを開きます")
+@tree.command(name="menu", description="株式メニューを開きます", guild=discord.Object(id=1276995395876028497))
 async def menu(interaction: discord.Interaction):
     await interaction.response.send_message("📊 メニューから選択してください：", view=StockMenu(), ephemeral=True)
 
