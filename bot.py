@@ -1,16 +1,94 @@
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-import os
-import json
-import io
 import asyncio
+import json
+import os
+import io
 import time
+import random
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
+from fastapi import FastAPI
 import threading
 import uvicorn
-from fastapi import FastAPI
+
+# --- BotとIntentsの初期化 ---
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+bot = commands.Bot(command_prefix="!", intents=intents)
+tree = bot.tree
+
+# --- データファイルと初期化 ---
+WARNING_FILE = "spam_warnings.json"
+STOCK_FILE = "stock_data.json"
+spam_data = {"warnings": {}, "last_reset": ""}
+user_message_log = {}
+backup_status = {}
+auto_backup_enabled = True
+CURRENCY_START = 1000
+NG_WORDS = ["ばか", "うざい", "死ね"]
+FUNNY_WORDS = ["草", "www", "笑った"]
+NEWS_EVENTS = [
+    ("政府が新政策を発表", 1.10),
+    ("経済危機の兆候", 0.90),
+    ("技術革新のニュース", 1.05),
+    ("スキャンダル報道", 0.85),
+    ("市場は安定状態", 1.00)
+]
+
+# --- FastAPI起動用 ---
+app = FastAPI()
+@app.get("/")
+def read_root():
+    return {"status": "alive"}
+
+def run_api():
+    uvicorn.run(app, host="0.0.0.0", port=8080)
+threading.Thread(target=run_api).start()
+
+# --- スパムデータの読み書き ---
+async def save_warnings():
+    with open(WARNING_FILE, "w", encoding="utf-8") as f:
+        json.dump(spam_data, f)
+
+async def load_warnings():
+    global spam_data
+    if os.path.exists(WARNING_FILE):
+        with open(WARNING_FILE, "r", encoding="utf-8") as f:
+            spam_data = json.load(f)
+
+async def reset_if_new_month():
+    now = datetime.utcnow()
+    current = now.strftime("%Y-%m")
+    if spam_data.get("last_reset") != current:
+        spam_data["warnings"] = {}
+        spam_data["last_reset"] = current
+        await save_warnings()
+
+# --- 株式データの読み書き ---
+def init_stock_data():
+    if not os.path.exists(STOCK_FILE):
+        with open(STOCK_FILE, "w") as f:
+            json.dump({"users": {}, "prices": {}, "history": {}}, f)
+    with open(STOCK_FILE, "r") as f:
+        return json.load(f)
+
+stock_data = init_stock_data()
+
+def save_stock_data():
+    with open(STOCK_FILE, "w") as f:
+        json.dump(stock_data, f, indent=2)
+
+def ensure_user(user_id):
+    if user_id not in stock_data["users"]:
+        stock_data["users"][user_id] = {"currency": CURRENCY_START, "stocks": {}, "dividend_on": True}
+    if user_id not in stock_data["prices"]:
+        stock_data["prices"][user_id] = 100.0
+    if user_id not in stock_data["history"]:
+        stock_data["history"][user_id] = []
+        
 # ========= INTENTS & BOT 初期化 =========
 intents = discord.Intents.default()
 intents.message_content = True
@@ -26,11 +104,11 @@ auto_backup_enabled = True
 WARNING_FILE = "spam_warnings.json"
 STOCK_FILE = "stock_data.json"
 CURRENCY_START = 1000
-
 NG_WORDS = ["ばか", "うざい", "死ね"]
 FUNNY_WORDS = ["草", "www", "笑った"]
+DIVIDEND_ENABLED = True
 
-# ========= スパム対策（保存・読み込み） =========
+# ========= スパム対策 保存・読み込み =========
 async def save_warnings():
     with open(WARNING_FILE, "w", encoding="utf-8") as f:
         json.dump(spam_data, f)
@@ -41,7 +119,7 @@ async def load_warnings():
         with open(WARNING_FILE, "r", encoding="utf-8") as f:
             spam_data = json.load(f)
     else:
-        save_warnings()
+        await save_warnings()
 
 async def reset_if_new_month():
     now = datetime.utcnow()
@@ -49,484 +127,280 @@ async def reset_if_new_month():
     if spam_data.get("last_reset") != current:
         spam_data["warnings"] = {}
         spam_data["last_reset"] = current
-        save_warnings()
+        await save_warnings()
 
-# ========= 株取引データの保存・読み込み =========
-async def load_stock_data():
+# ========= 株データ保存/読み込み =========
+def load_stock_data_sync():
     if not os.path.exists(STOCK_FILE):
         with open(STOCK_FILE, "w") as f:
-            json.dump({"users": {}, "prices": {}, "history": {}}, f)
+            json.dump({"users": {}, "prices": {}, "history": {}, "names": {}}, f)
     with open(STOCK_FILE, "r") as f:
         return json.load(f)
 
-async def save_stock_data():
+def save_stock_data_sync():
     with open(STOCK_FILE, "w") as f:
         json.dump(stock_data, f, indent=2)
 
-stock_data = load_stock_data()
+stock_data = load_stock_data_sync()
 
-async def ensure_user(user_id):
-    if user_id not in stock_data["users"]:
-        stock_data["users"][user_id] = {"currency": CURRENCY_START, "stocks": {}}
+def ensure_user(uid):
+    if uid not in stock_data["users"]:
+        stock_data["users"][uid] = {"currency": CURRENCY_START, "stocks": {}}
+    if uid not in stock_data["prices"]:
+        stock_data["prices"][uid] = 100.0
+    if uid not in stock_data["history"]:
+        stock_data["history"][uid] = []
 
-# ========= メッセージ監視（スパム＆株価） =========
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+bot = commands.Bot(command_prefix='!', intents=intents)
+tree = bot.tree
 
-    user_id = str(message.author.id)
-    content = message.content.lower()
-    now = time.time()
+# ================== データファイルと初期値 ==================
+WARNING_FILE = "spam_warnings.json"
+STOCK_FILE = "stock_data.json"
+CURRENCY_START = 1000
 
-    # スパム対策ログ
-    log = user_message_log.setdefault(user_id, [])
-    log.append((message.content, now))
-    log[:] = [(c, t) for c, t in log if now - t <= 5]
-
-    counts = {}
-    for content_, t in log:
-        counts[content_] = counts.get(content_, 0) + 1
-
-    for count in counts.values():
-        if count >= 5:
-            warnings = spam_data["warnings"].get(user_id, 0) + 1
-            spam_data["warnings"][user_id] = warnings
-            save_warnings()
-
-            timeout_duration = 3600 if warnings >= 5 else 600
-            try:
-                await message.author.timeout(discord.utils.utcnow() + timedelta(seconds=timeout_duration))
-                await message.channel.send(f"\U0001F6A8 {message.author.mention} タイムアウトされました。警告: {warnings} 回")
-            except Exception as e:
-                print(f"タイムアウト失敗: {e}")
-            break
-
-    # 株価変動
-    ensure_user(user_id)
-    if user_id not in stock_data["prices"]:
-        stock_data["prices"][user_id] = 100.0
-    if user_id not in stock_data["history"]:
-        stock_data["history"][user_id] = []
-
-    changed = False
-    if any(word in content for word in NG_WORDS):
-        stock_data["prices"][user_id] *= 0.95
-        changed = True
-    elif any(word in content for word in FUNNY_WORDS):
-        stock_data["prices"][user_id] *= 1.05
-        changed = True
-
-    if changed:
-        stock_data["history"][user_id].append([
-            datetime.now().strftime("%Y-%m-%d %H:%M"),
-            round(stock_data["prices"][user_id], 2)
-        ])
-        stock_data["history"][user_id] = stock_data["history"][user_id][-50:]
-        save_stock_data()
-
-    await bot.process_commands(message)
-
-# ========= 株取引スラッシュコマンド =========
-@tree.command(name="stock_price")
-@app_commands.describe(target="ユーザー")
-async def stock_price(interaction: discord.Interaction, target: discord.User):
-    uid = str(target.id)
-    price = stock_data["prices"].get(uid, 100.0)
-    await interaction.response.send_message(f"📈 {target.display_name} の株価は {price:.2f} G")
-
-@tree.command(name="stock_buy")
-@app_commands.describe(target="ユーザー", amount="株数")
-async def stock_buy(interaction: discord.Interaction, target: discord.User, amount: int):
-    buyer = str(interaction.user.id)
-    seller = str(target.id)
-    ensure_user(buyer)
-    ensure_user(seller)
-    price = stock_data["prices"].get(seller, 100.0)
-    cost = price * amount
-    if stock_data["users"][buyer]["currency"] < cost:
-        return await interaction.response.send_message("❌ 残高不足")
-    stock_data["users"][buyer]["currency"] -= cost
-    stock_data["users"][buyer]["stocks"][seller] = stock_data["users"][buyer]["stocks"].get(seller, 0) + amount
-    save_stock_data()
-    await interaction.response.send_message(f"✅ {target.display_name} の株を {amount} 株購入！")
-
-@tree.command(name="stock_sell")
-@app_commands.describe(target="ユーザー", amount="株数")
-async def stock_sell(interaction: discord.Interaction, target: discord.User, amount: int):
-    seller = str(interaction.user.id)
-    target_id = str(target.id)
-    ensure_user(seller)
-    owned = stock_data["users"][seller]["stocks"].get(target_id, 0)
-    if owned < amount:
-        return await interaction.response.send_message("❌ 株が足りません")
-    price = stock_data["prices"].get(target_id, 100.0)
-    stock_data["users"][seller]["currency"] += price * amount
-    stock_data["users"][seller]["stocks"][target_id] -= amount
-    save_stock_data()
-    await interaction.response.send_message(f"💰 売却して {price*amount:.2f} G 獲得！")
-
-@tree.command(name="stock_portfolio")
-async def stock_portfolio(interaction: discord.Interaction):
-    uid = str(interaction.user.id)
-    ensure_user(uid)
-    profile = stock_data["users"][uid]
-    msg = f"💼 通貨: {profile['currency']:.2f} G\n"
-    for sid, count in profile["stocks"].items():
-        user = await bot.fetch_user(int(sid))
-        price = stock_data["prices"].get(sid, 100.0)
-        msg += f" - {user.display_name}: {count} 株（{price:.2f} G）\n"
-    await interaction.response.send_message(msg)
-
-@tree.command(name="stock_leaderboard")
-async def stock_leaderboard(interaction: discord.Interaction):
-    board = []
-    for uid, user in stock_data["users"].items():
-        total = user["currency"]
-        for sid, count in user["stocks"].items():
-            total += stock_data["prices"].get(sid, 100.0) * count
-        board.append((uid, total))
-    board.sort(key=lambda x: x[1], reverse=True)
-    msg = "🏆 資産ランキング:\n"
-    for i, (uid, total) in enumerate(board[:10], 1):
-        name = (await bot.fetch_user(int(uid))).display_name
-        msg += f"{i}. {name}: {total:.2f} G\n"
-    await interaction.response.send_message(msg)
-
-@tree.command(name="stock_chart")
-@app_commands.describe(target="ユーザー")
-async def stock_chart(interaction: discord.Interaction, target: discord.User):
-    uid = str(target.id)
-    history = stock_data.get("history", {}).get(uid, [])
-    if not history:
-        return await interaction.response.send_message("📉 株価履歴なし")
-    times = [h[0] for h in history]
-    prices = [h[1] for h in history]
-    plt.figure()
-    plt.plot(times, prices, marker="o")
-    plt.title(f"{target.display_name}の株価推移")
-    plt.xlabel("時刻")
-    plt.ylabel("株価")
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    filename = f"/tmp/{uid}_chart.png"
-    plt.savefig(filename)
-    plt.close()
-    await interaction.response.send_message(file=discord.File(filename))
-
-# ========= 自動配当 =========
-@tasks.loop(hours=1)
-def auto_dividend():
-    for uid, user in stock_data["users"].items():
-        user["stocks"][uid] = user["stocks"].get(uid, 0) + 0.1
-    save_stock_data()
-
-
-# ※バックアップ・テンプレート系コマンドは元コードにそのまま存在
-# （この後もスパム対策・バックアップ機能等はそのまま動作します）
-
-
-# ========= グローバル変数 =========
 spam_data = {"warnings": {}, "last_reset": ""}
 user_message_log = {}
 backup_status = {}
 auto_backup_enabled = True
-WARNING_FILE = "spam_warnings.json"
 
-# ========= スパム対策（保存・読み込み） =========
-async def save_warnings():
-    with open(WARNING_FILE, "w", encoding="utf-8") as f:
-        json.dump(spam_data, f)
+NG_WORDS = ["ばか", "うざい", "死ね"]
+FUNNY_WORDS = ["草", "www", "笑った"]
 
-async def load_warnings():
-    global spam_data
-    if os.path.exists(WARNING_FILE):
-        with open(WARNING_FILE, "r", encoding="utf-8") as f:
-            spam_data = json.load(f)
-    else:
-        save_warnings()
+# ================== 株データ初期化 ==================
+if not os.path.exists(STOCK_FILE):
+    with open(STOCK_FILE, "w") as f:
+        json.dump({"users": {}, "prices": {}, "history": {}}, f)
+with open(STOCK_FILE, "r") as f:
+    stock_data = json.load(f)
 
-async def reset_if_new_month():
-    now = datetime.utcnow()
-    current = now.strftime("%Y-%m")
-    if spam_data.get("last_reset") != current:
-        spam_data["warnings"] = {}
-        spam_data["last_reset"] = current
-        save_warnings()
+# ================== 株主配当ON/OFF ==================
+dividend_enabled = True
 
-# ========= スパム検出 =========
-@bot.event
-async def on_message(message):
-    if message.author.bot:
+@tree.command(name="dividend_toggle")
+async def dividend_toggle(interaction: discord.Interaction):
+    global dividend_enabled
+    dividend_enabled = not dividend_enabled
+    msg = "✅ 配当を有効化しました" if dividend_enabled else "🛑 配当を無効化しました"
+    await interaction.response.send_message(msg, ephemeral=True)
+
+@tasks.loop(hours=1)
+async def auto_dividend():
+    if not dividend_enabled:
         return
+    for uid in stock_data["users"]:
+        stock_data["users"][uid]["stocks"][uid] = stock_data["users"][uid]["stocks"].get(uid, 0) + 0.1
+    with open(STOCK_FILE, "w") as f:
+        json.dump(stock_data, f, indent=2)
 
-    user_id = str(message.author.id)
-    now = time.time()
-    log = user_message_log.setdefault(user_id, [])
-    log.append((message.content, now))
-    log[:] = [(c, t) for c, t in log if now - t <= 5]
-
-    counts = {}
-    for content, t in log:
-        counts[content] = counts.get(content, 0) + 1
-
-    for count in counts.values():
-        if count >= 5:
-            warnings = spam_data["warnings"].get(user_id, 0) + 1
-            spam_data["warnings"][user_id] = warnings
-            save_warnings()
-
-            timeout_duration = 3600 if warnings >= 5 else 600
-            try:
-                await message.author.timeout(discord.utils.utcnow() + timedelta(seconds=timeout_duration))
-                await message.channel.send(
-                    f"🚨 {message.author.mention} タイムアウトされました。警告: {warnings} 回"
-                )
-            except Exception as e:
-                print(f"タイムアウト失敗: {e}")
-            break
-
-    await bot.process_commands(message)
-
-# ========= スパムコマンド =========
-@tree.command(name="warns", description="スパム警告数確認")
-@app_commands.describe(user="対象ユーザー")
-async def warns(interaction: discord.Interaction, user: discord.User):
-    load_warnings()
-    warn_count = spam_data["warnings"].get(str(user.id), 0)
-    await interaction.response.send_message(f"{user.mention} の警告数: {warn_count}", ephemeral=True)
-
-@tree.command(name="resetwarns", description="警告数をリセット（管理者）")
-@app_commands.describe(user="対象ユーザー")
-async def resetwarns(interaction: discord.Interaction, user: discord.User):
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("管理者専用コマンドです。", ephemeral=True)
-    spam_data["warnings"].pop(str(user.id), None)
-    save_warnings()
-    await interaction.response.send_message(f"{user.mention} の警告数をリセットしました。", ephemeral=True)
-
-# ========= バックアップ & 復元 =========
-@tree.command(name="backup", description="メッセージをバックアップ")
-@app_commands.describe(days="過去何日分を保存するか")
-async def backup(interaction: discord.Interaction, days: int = 7):
-    await interaction.response.send_message(f"📦 過去 {days} 日のメッセージを保存中...", ephemeral=True)
-    channel = interaction.channel
-    guild_id = interaction.guild_id
-    after_time = datetime.utcnow() - timedelta(days=days)
-
-    messages_data = []
-    async for message in channel.history(limit=None, oldest_first=True, after=after_time):
-        messages_data.append({
-            "display_name": message.author.display_name,
-            "avatar_url": message.author.display_avatar.url,
-            "content": message.content,
-            "created_at": str(message.created_at),
-            "attachments": [a.url for a in message.attachments],
-            "embeds": [embed.to_dict() for embed in message.embeds],
-        })
-
-    backup_status[guild_id] = {
-        "started": True,
-        "completed_channels": 1,
-        "total_channels": 1,
-        "messages": len(messages_data),
-        "last_updated": str(datetime.utcnow())
-    }
-
-    json_str = json.dumps(messages_data, ensure_ascii=False, indent=2)
-    file = discord.File(io.BytesIO(json_str.encode("utf-8")), filename=f"backup_{channel.id}.json")
-    await interaction.followup.send("✅ バックアップ完了！", file=file)
-
-@tree.command(name="status", description="バックアップ状況を確認")
-async def status(interaction: discord.Interaction):
-    s = backup_status.get(interaction.guild_id)
-    if not s:
-        return await interaction.response.send_message("現在バックアップは行われていません。", ephemeral=True)
-    await interaction.response.send_message(
-        f"📊 チャンネル: {s['completed_channels']}/{s['total_channels']}\n"
-        f"💬 メッセージ: {s['messages']}\n"
-        f"🕒 更新: {s['last_updated']}", ephemeral=True
-    )
-
-@tree.command(name="restore", description="バックアップを復元（Webhook使用）")
-@app_commands.describe(file="バックアップファイル（.json）")
-async def restore(interaction: discord.Interaction, file: discord.Attachment):
-    if not file.filename.endswith(".json"):
-        return await interaction.response.send_message("JSONファイルをアップロードしてください。", ephemeral=True)
-
-    await interaction.response.send_message("復元を開始中...", ephemeral=True)
-    try:
-        content = await file.read()
-        messages = json.loads(content.decode("utf-8"))
-    except Exception as e:
-        return await interaction.followup.send(f"読み込み失敗: {e}", ephemeral=True)
-
-    try:
-        webhook = await interaction.channel.create_webhook(name="復元Webhook")
-    except discord.Forbidden:
-        return await interaction.followup.send("Webhook作成に失敗しました。", ephemeral=True)
-
-    async def send_message(msg):
-        try:
-            await webhook.send(
-                content=msg["content"] or None,
-                username=msg["display_name"],
-                avatar_url=msg["avatar_url"],
-                embeds=[discord.Embed.from_dict(e) for e in msg.get("embeds", [])],
-                wait=True
-            )
-        except Exception as e:
-            print(f"送信失敗: {e}")
-
-    await asyncio.gather(*(send_message(m) for m in messages))
-    await webhook.delete()
-    await interaction.followup.send(f"✅ 復元完了！({len(messages)} 件)", ephemeral=True)
-
-# ========= テンプレート機能 =========
-@tree.command(name="save_template", description="ロール・チャンネル構成を保存")
-async def save_template(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("管理者専用", ephemeral=True)
-
-    guild = interaction.guild
-    data = {"roles": [], "categories": [], "channels": []}
-
-    for role in guild.roles:
-        if role.is_default(): continue
-        data["roles"].append({
-            "name": role.name,
-            "permissions": role.permissions.value,
-            "color": role.color.value,
-            "hoist": role.hoist,
-            "mentionable": role.mentionable,
-        })
-
-    for category in guild.categories:
-        data["categories"].append({"name": category.name, "position": category.position})
-
-    for channel in guild.channels:
-        ch_data = {
-            "type": "text" if isinstance(channel, discord.TextChannel) else "voice",
-            "name": channel.name,
-            "category": channel.category.name if channel.category else None,
-            "position": channel.position
-        }
-        data["channels"].append(ch_data)
-
-    json_str = json.dumps(data, ensure_ascii=False, indent=2)
-    file = discord.File(io.BytesIO(json_str.encode("utf-8")), filename=f"{guild.name}_template.json")
-    await interaction.response.send_message("✅ テンプレート保存完了", file=file, ephemeral=True)
-
-@tree.command(name="load_template", description="テンプレートから復元")
-@app_commands.describe(file="テンプレートファイル（.json）")
-async def load_template(interaction: discord.Interaction, file: discord.Attachment):
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("管理者専用", ephemeral=True)
-
-    await interaction.response.send_message("復元中...", ephemeral=True)
-
-    try:
-        template = json.loads((await file.read()).decode("utf-8"))
-    except Exception as e:
-        return await interaction.followup.send(f"読み込み失敗: {e}", ephemeral=True)
-
-    guild = interaction.guild
-    category_map = {}
-
-    for r in template["roles"]:
-        try:
-            await guild.create_role(
-                name=r["name"],
-                permissions=discord.Permissions(r["permissions"]),
-                color=discord.Color(r["color"]),
-                hoist=r["hoist"],
-                mentionable=r["mentionable"]
-            )
-        except Exception as e:
-            print(f"ロール作成失敗: {e}")
-
-    for c in sorted(template["categories"], key=lambda x: x["position"]):
-        try:
-            obj = await guild.create_category(c["name"])
-            category_map[c["name"]] = obj
-        except Exception as e:
-            print(f"カテゴリ作成失敗: {e}")
-
-    for ch in template["channels"]:
-        try:
-            cat = category_map.get(ch["category"]) if ch["category"] else None
-            if ch["type"] == "text":
-                await guild.create_text_channel(name=ch["name"], category=cat)
-            else:
-                await guild.create_voice_channel(name=ch["name"], category=cat)
-        except Exception as e:
-            print(f"チャンネル作成失敗: {e}")
-
-    await interaction.followup.send("✅ サーバー構成復元完了", ephemeral=True)
-
-# ========= 自動バックアップタスク =========
-@tasks.loop(hours=168)
-async def weekly_backup_task():
-    print("🔄 自動バックアップ実行（タスク内容は実装してください）")
-
-# ========= on_ready =========
-@bot.event
-async def on_ready():
-    reset_if_new_month()
-    load_warnings()
-    try:
-        await tree.sync()
-        print(f"✅ Synced {len(await tree.sync())} commands")
-    except Exception as e:
-        print(f"⚠️ Sync failed: {e}")
-    if auto_backup_enabled and not weekly_backup_task.is_running():
-        weekly_backup_task.start()
-        print("▶️ 自動バックアップ開始")
-
-# ========= 自動バックアップ ON/OFF =========
-@tree.command(name="backup_on", description="自動バックアップを有効化")
-async def backup_on(interaction: discord.Interaction):
-    global auto_backup_enabled
-    auto_backup_enabled = True
-    if not weekly_backup_task.is_running():
-        weekly_backup_task.start()
-    await interaction.response.send_message("✅ 自動バックアップを有効化", ephemeral=True)
-
-@tree.command(name="backup_off", description="自動バックアップを無効化")
-async def backup_off(interaction: discord.Interaction):
-    global auto_backup_enabled
-    auto_backup_enabled = False
-    if weekly_backup_task.is_running():
-        weekly_backup_task.cancel()
-    await interaction.response.send_message("🛑 自動バックアップを無効化", ephemeral=True)
-
-# FastAPIアプリ（Koyebヘルスチェック用）
+# ================== FastAPI ヘルスチェック ==================
 app = FastAPI()
 
 @app.get("/")
-def read_root():
+def health():
     return {"status": "alive"}
 
 def run_api():
     uvicorn.run(app, host="0.0.0.0", port=8080)
 
-# FastAPIを別スレッドで起動
 threading.Thread(target=run_api).start()
 
-# Discord Bot 起動部分
-intents = discord.Intents.default()
-intents.message_content = True
+# ================== GUI 選択メニューサンプル ==================
+class StockMenu(ui.View):
+    @ui.select(
+        placeholder="株関連の操作を選んでください",
+        options=[
+            discord.SelectOption(label="株価を見る", value="price"),
+            discord.SelectOption(label="ポートフォリオ", value="portfolio"),
+            discord.SelectOption(label="ランキング", value="leaderboard"),
+        ]
+    )
+    async def select_callback(self, interaction: discord.Interaction, select: ui.Select):
+        uid = str(interaction.user.id)
+        if select.values[0] == "price":
+            price = stock_data["prices"].get(uid, 100.0)
+            await interaction.response.send_message(f"📈 あなたの株価: {price:.2f} G", ephemeral=True)
+        elif select.values[0] == "portfolio":
+            user = stock_data["users"].get(uid, {"currency": CURRENCY_START, "stocks": {}})
+            msg = f"💼 通貨: {user['currency']:.2f} G\n"
+            for sid, count in user["stocks"].items():
+                uname = (await bot.fetch_user(int(sid))).display_name
+                msg += f" - {uname}: {count} 株\n"
+            await interaction.response.send_message(msg, ephemeral=True)
+        elif select.values[0] == "leaderboard":
+            board = []
+            for id_, user in stock_data["users"].items():
+                total = user["currency"] + sum(stock_data["prices"].get(sid, 100.0) * cnt for sid, cnt in user["stocks"].items())
+                board.append((id_, total))
+            board.sort(key=lambda x: x[1], reverse=True)
+            msg = "🏆 資産ランキング:\n"
+            for i, (uid, total) in enumerate(board[:10], 1):
+                uname = (await bot.fetch_user(int(uid))).display_name
+                msg += f"{i}. {uname}: {total:.2f} G\n"
+            await interaction.response.send_message(msg, ephemeral=True)
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+@tree.command(name="stock_menu", description="株式メニューを表示します")
+async def stock_menu(interaction: discord.Interaction):
+    await interaction.response.send_message("📊 株式メニューはこちら！", view=StockMenu(), ephemeral=True)
+    
+@tree.command(name="stock_buy", description="株を購入します")
+@app_commands.describe(target="誰の株を買うか", amount="購入株数")
+async def stock_buy(interaction: discord.Interaction, target: discord.User, amount: int):
+    buyer = str(interaction.user.id)
+    seller = str(target.id)
+    await ensure_user(buyer)
+    await ensure_user(seller)
+    price = stock_data['prices'].get(seller, 100.0)
+    total_cost = price * amount
+    if stock_data['users'][buyer]['currency'] < total_cost:
+        return await interaction.response.send_message("❌ 残高不足です。", ephemeral=True)
+    stock_data['users'][buyer]['currency'] -= total_cost
+    stock_data['users'][buyer]['stocks'][seller] = stock_data['users'][buyer]['stocks'].get(seller, 0) + amount
+    await save_stock_data()
+    await interaction.response.send_message(f"✅ {target.display_name} の株を {amount} 株 購入しました。")
 
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user}")
-    update_data.start()
+@tree.command(name="stock_sell", description="株を売却します")
+@app_commands.describe(target="誰の株を売るか", amount="売却株数")
+async def stock_sell(interaction: discord.Interaction, target: discord.User, amount: int):
+    seller = str(interaction.user.id)
+    target_id = str(target.id)
+    await ensure_user(seller)
+    owned = stock_data['users'][seller]['stocks'].get(target_id, 0)
+    if owned < amount:
+        return await interaction.response.send_message("❌ 所持株が足りません。", ephemeral=True)
+    price = stock_data['prices'].get(target_id, 100.0)
+    stock_data['users'][seller]['currency'] += price * amount
+    stock_data['users'][seller]['stocks'][target_id] -= amount
+    await save_stock_data()
+    await interaction.response.send_message(f"💰 {target.display_name} の株を {amount} 株 売却し、{price * amount:.2f} G を得ました。")
 
-@tasks.loop(hours=1)
-async def update_data():
-    print("Hourly update task")
+@tree.command(name="ping", description="Botの応答速度を測定")
+async def ping(interaction: discord.Interaction):
+    latency = bot.latency * 1000
+    await interaction.response.send_message(f"🏓 Pong! 応答速度: {latency:.2f} ms")
+
+@tree.command(name="uptime", description="Botの稼働時間を表示")
+async def uptime(interaction: discord.Interaction):
+    uptime = datetime.utcnow() - bot.launch_time
+    await interaction.response.send_message(f"🕒 稼働時間: {str(uptime).split('.')[0]}")
+
+@tree.command(name="userinfo", description="ユーザー情報を表示")
+@app_commands.describe(user="調べたいユーザー")
+async def userinfo(interaction: discord.Interaction, user: discord.User):
+    embed = discord.Embed(title="ユーザー情報", description=f"{user.mention} の情報", color=discord.Color.blue())
+    embed.add_field(name="ユーザー名", value=f"{user.name}#{user.discriminator}")
+    embed.add_field(name="ID", value=user.id)
+    embed.add_field(name="作成日", value=user.created_at.strftime("%Y-%m-%d %H:%M"))
+    embed.set_thumbnail(url=user.display_avatar.url)
+    await interaction.response.send_message(embed=embed)
+
+@tree.command(name="serverinfo", description="サーバー情報を表示")
+async def serverinfo(interaction: discord.Interaction):
+    guild = interaction.guild
+    embed = discord.Embed(title=guild.name, description="サーバー情報", color=discord.Color.green())
+    embed.add_field(name="メンバー数", value=guild.member_count)
+    embed.add_field(name="作成日", value=guild.created_at.strftime("%Y-%m-%d %H:%M"))
+    embed.add_field(name="チャンネル数", value=len(guild.channels))
+    embed.set_thumbnail(url=guild.icon.url if guild.icon else discord.Embed.Empty)
+    await interaction.response.send_message(embed=embed)
+
+# === GUI 選択メニュー対応例 ===
+class StockMenu(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="株価確認", value="price", emoji="📈"),
+            discord.SelectOption(label="ポートフォリオ", value="portfolio", emoji="💼"),
+            discord.SelectOption(label="ランキング", value="rank", emoji="🏆"),
+        ]
+        super().__init__(placeholder="操作を選んでください", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        await ensure_user(uid)
+        if self.values[0] == "price":
+            price = stock_data['prices'].get(uid, 100.0)
+            await interaction.response.send_message(f"📈 あなたの株価: {price:.2f} G")
+        elif self.values[0] == "portfolio":
+            profile = stock_data["users"][uid]
+            msg = f"💼 通貨: {profile['currency']:.2f} G\n"
+            for sid, count in profile['stocks'].items():
+                user = await bot.fetch_user(int(sid))
+                price = stock_data['prices'].get(sid, 100.0)
+                msg += f" - {user.display_name}: {count} 株（{price:.2f} G）\n"
+            await interaction.response.send_message(msg)
+        elif self.values[0] == "rank":
+            board = []
+            for uid_, user in stock_data["users"].items():
+                total = user["currency"] + sum(stock_data['prices'].get(sid, 100.0) * count for sid, count in user['stocks'].items())
+                board.append((uid_, total))
+            board.sort(key=lambda x: x[1], reverse=True)
+            msg = "🏆 資産ランキング:\n"
+            for i, (uid_, total) in enumerate(board[:10], 1):
+                name = (await bot.fetch_user(int(uid_))).display_name
+                msg += f"{i}. {name}: {total:.2f} G\n"
+            await interaction.response.send_message(msg)
+
+class StockMenuView(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+        self.add_item(StockMenu())
+
+@tree.command(name="stock_gui", description="株式管理GUIを表示")
+async def stock_gui(interaction: discord.Interaction):
+    await interaction.response.send_message("📊 操作を選んでください：", view=StockMenuView(), ephemeral=True)
+
+# Botの起動時間記録
+bot.launch_time = datetime.utcnow()
+from discord.ui import View, Select
+
+class StockMenu(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(SelectMenu())
+
+class SelectMenu(Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="株価確認", description="指定ユーザーの株価を表示"),
+            discord.SelectOption(label="資産ランキング", description="全体の資産ランキング"),
+            discord.SelectOption(label="ポートフォリオ", description="自分の保有株一覧")
+        ]
+        super().__init__(placeholder="株式メニューを選んでください", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        if self.values[0] == "株価確認":
+            price = stock_data["prices"].get(uid, 100.0)
+            await interaction.response.send_message(f"📈 あなたの株価は {price:.2f} G")
+        elif self.values[0] == "資産ランキング":
+            board = []
+            for uid_, user in stock_data["users"].items():
+                total = user["currency"] + sum(stock_data["prices"].get(sid, 100.0) * count for sid, count in user["stocks"].items())
+                board.append((uid_, total))
+            board.sort(key=lambda x: x[1], reverse=True)
+            msg = "🏆 資産ランキング:\n"
+            for i, (uid_, total) in enumerate(board[:10], 1):
+                name = (await bot.fetch_user(int(uid_))).display_name
+                msg += f"{i}. {name}: {total:.2f} G\n"
+            await interaction.response.send_message(msg)
+        elif self.values[0] == "ポートフォリオ":
+            profile = stock_data["users"].get(uid)
+            if not profile:
+                await interaction.response.send_message("データが見つかりません")
+                return
+            msg = f"💼 通貨: {profile['currency']:.2f} G\n"
+            for sid, count in profile["stocks"].items():
+                user = await bot.fetch_user(int(sid))
+                price = stock_data["prices"].get(sid, 100.0)
+                msg += f" - {user.display_name}: {count} 株（{price:.2f} G）\n"
+            await interaction.response.send_message(msg)
+
+@tree.command(name="menu", description="株式メニューを開きます")
+async def menu(interaction: discord.Interaction):
+    await interaction.response.send_message("📊 メニューから選択してください：", view=StockMenu(), ephemeral=True)
 
 # ========= Bot 起動 =========
 token = os.getenv("DISCORD_BOT_TOKEN")
