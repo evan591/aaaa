@@ -6,9 +6,7 @@ loguru
 minio
 yt_dlp
 PyNaCl
-pynacl
-spotipy
-discord.py==2.3.2
 matplotlib
 uvicorn
 fastapi
+flask
