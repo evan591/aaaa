@@ -13,6 +13,7 @@ from fastapi import FastAPI
 import threading
 import uvicorn
 from discord import ui
+from keep_alive import keep_alive
 
 # --- BotとIntentsの初期化 ---
 intents = discord.Intents.default()
@@ -399,6 +400,7 @@ if not token:
     print("❌ DISCORD_BOT_TOKEN が設定されていません。")
 else:
     print("🟢 Bot起動中...")
+    keep_alive()
     bot.run(token)
     
 @bot.event
