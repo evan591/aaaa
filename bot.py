@@ -394,6 +394,68 @@ class SelectMenu(Select):
 async def menu(interaction: discord.Interaction):
     await interaction.response.send_message("📊 メニューから選択してください：", view=StockMenu(), ephemeral=True)
 
+# ===== ユーザー制限設定ファイル =====
+SETTINGS_FILE = "user_limits.json"
+
+# 初期化：ユーザーごとの上限設定を読み込み
+def load_user_limits():
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+user_limits = load_user_limits()
+
+def save_user_limits():
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(user_limits, f, indent=2)
+
+# ===== メッセージ監視 =====
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    user_id = str(message.author.id)
+    if user_id in user_limits:
+        limit = user_limits[user_id]
+        if len(message.content) > limit:
+            await message.delete()
+            try:
+                await message.channel.send(f"{message.author.mention} メッセージが長すぎたため削除されました。({len(message.content)}文字 / 上限 {limit}文字)")
+            except discord.Forbidden:
+                pass  # メッセージ送信不可（権限など）の場合は無視
+    await bot.process_commands(message)
+
+# ===== 管理者用コマンド：文字数制限を設定 =====
+@tree.command(name="set_limit", description="特定ユーザーのメッセージ文字数上限を設定します")
+@app_commands.describe(user="対象ユーザー", limit="最大文字数")
+async def set_limit(interaction: discord.Interaction, user: discord.User, limit: int):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("このコマンドを使うにはメッセージ管理権限が必要です。", ephemeral=True)
+        return
+
+    user_limits[str(user.id)] = limit
+    save_user_limits()
+    await interaction.response.send_message(f"{user.mention} のメッセージ上限を {limit} 文字に設定しました。")
+
+# ===== 文字数制限を解除 =====
+@tree.command(name="remove_limit", description="特定ユーザーの文字数制限を解除します")
+@app_commands.describe(user="対象ユーザー")
+async def remove_limit(interaction: discord.Interaction, user: discord.User):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("このコマンドを使うにはメッセージ管理権限が必要です。", ephemeral=True)
+        return
+
+    if str(user.id) in user_limits:
+        del user_limits[str(user.id)]
+        save_user_limits()
+        await interaction.response.send_message(f"{user.mention} の文字数制限を解除しました。")
+    else:
+        await interaction.response.send_message(f"{user.mention} に文字数制限は設定されていません。")
+
+
 # ========= Bot 起動 =========
 token = os.getenv("DISCORD_BOT_TOKEN")
 if not token:
